@@ -37,12 +37,12 @@ jobs:
       # NuGet API key — no long-lived NUGET_API_KEY secret to store or rotate.
       # Requires a trusted publishing policy on nuget.org for this repo + workflow
       # (Repository Owner: capskip, Repository: capskip-dotnet, Workflow File: publish.yml).
-      # NUGET_USER is your nuget.org profile name (not an email, not a credential).
+      # 'user' is the nuget.org profile name that owns the trusted publishing policy.
       - name: NuGet login (OIDC → temporary API key)
         uses: NuGet/login@v1
         id: login
         with:
-          user: ${{ secrets.NUGET_USER }}
+          user: capskip
 
       - name: Push to NuGet
         # --skip-duplicate makes a re-run of an already-published version a no-op.
