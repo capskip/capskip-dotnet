@@ -12,6 +12,9 @@ jobs:
   build-and-publish:
     name: Build and publish to NuGet
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for NuGet Trusted Publishing (OIDC)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,11 +33,21 @@ jobs:
       - name: Pack
         run: dotnet pack src/CapSkip/CapSkip.csproj --configuration Release --output artifacts
 
+      # Trusted Publishing (OIDC): exchange the GitHub OIDC token for a short-lived
+      # NuGet API key — no long-lived NUGET_API_KEY secret to store or rotate.
+      # Requires a trusted publishing policy on nuget.org for this repo + workflow
+      # (Repository Owner: capskip, Repository: capskip-dotnet, Workflow File: publish.yml).
+      # NUGET_USER is your nuget.org profile name (not an email, not a credential).
+      - name: NuGet login (OIDC → temporary API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       - name: Push to NuGet
-        # Requires a NUGET_API_KEY repository secret. --skip-duplicate makes a
-        # re-run of an already-published version a no-op instead of a failure.
+        # --skip-duplicate makes a re-run of an already-published version a no-op.
         run: >
           dotnet nuget push "artifacts/*.nupkg"
-          --api-key "${{ secrets.NUGET_API_KEY }}"
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
