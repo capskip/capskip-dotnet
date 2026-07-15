@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>CapSkip.Examples</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- In a real project you would instead: dotnet add package CapSkip -->
+    <ProjectReference Include="../../src/CapSkip/CapSkip.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="captcha.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>
