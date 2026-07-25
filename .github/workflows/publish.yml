@@ -13,7 +13,7 @@ jobs:
     name: Build and publish to NuGet
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # required to create the GitHub release
       id-token: write # required for NuGet Trusted Publishing (OIDC)
     steps:
       - name: Checkout
@@ -51,3 +51,12 @@ jobs:
           --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
+
+      # Without this the tag ships to NuGet but never appears on the repo's
+      # Releases page. Notes are auto-generated from merged PRs and can be
+      # edited afterwards.
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: CapSkip .NET SDK ${{ github.ref_name }}
+          generate_release_notes: true
