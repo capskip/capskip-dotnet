@@ -10,16 +10,16 @@
 
     <!-- NuGet package metadata -->
     <PackageId>CapSkip</PackageId>
-    <Version>1.0.2</Version>
+    <Version>1.1.0</Version>
     <Authors>CapSkip</Authors>
     <Company>CapSkip</Company>
-    <Description>.NET SDK for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3, Cloudflare Turnstile).</Description>
+    <Description>.NET SDK for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3, Cloudflare Turnstile, GeeTest v3).</Description>
     <PackageProjectUrl>https://capskip.com</PackageProjectUrl>
     <RepositoryUrl>https://github.com/capskip/capskip-dotnet</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>captcha;captcha-solver;recaptcha;cloudflare;turnstile;capskip;automation</PackageTags>
+    <PackageTags>captcha;captcha-solver;recaptcha;cloudflare;turnstile;geetest;capskip;automation</PackageTags>
     <PackageReleaseNotes>See CHANGELOG.md for release history.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>

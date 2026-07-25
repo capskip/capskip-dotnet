@@ -21,8 +21,9 @@ The SDK only supports the four captcha types documented by CapSkip.
 | reCAPTCHA v2 | `RecaptchaAsync(..., version="v2")` | `userrecaptcha` |
 | reCAPTCHA v3 | `RecaptchaAsync(..., version="v3")` | `userrecaptcha` + `version=v3` |
 | Cloudflare Turnstile | `TurnstileAsync()` | `turnstile` |
+| GeeTest v3 (slide) | `GeetestAsync()` | `geetest` |
 
-**Proxy** is supported for reCAPTCHA and Turnstile only — not for image captcha.
+**Proxy** is supported for reCAPTCHA, Turnstile, and GeeTest — not for image captcha.
 
 ---
 
@@ -80,7 +81,7 @@ other CapSkip SDKs.
 ```csharp
 await solver.NormalAsync("captcha.png");
 await solver.NormalAsync("https://example.com/captcha.jpg");
-await solver.NormalAsync("data:image/png;base64,iVBORw0KGgo...", new() { ["json"] = 1 });
+await solver.NormalAsync("data:image/png;base64,iVBORw0KGgo...", new Dictionary<string, object?> { ["json"] = 1 });
 ```
 
 Only `json` is accepted as an extra option. Proxy is **not** supported.
@@ -113,16 +114,16 @@ Do **not** send `version`, `action`, or `score` for v2.
 await solver.RecaptchaAsync("...", "https://example.com");
 
 // Invisible v2
-await solver.RecaptchaAsync("...", "...", new() { ["invisible"] = 1 });
+await solver.RecaptchaAsync("...", "...", new Dictionary<string, object?> { ["invisible"] = 1 });
 
 // Enterprise v2
-await solver.RecaptchaAsync("...", "...", new() { ["enterprise"] = 1 });
+await solver.RecaptchaAsync("...", "...", new Dictionary<string, object?> { ["enterprise"] = 1 });
 
 // Enterprise v2 with data-s (SDK alias: datas)
-await solver.RecaptchaAsync("...", "...", new() { ["enterprise"] = 1, ["datas"] = "..." });
+await solver.RecaptchaAsync("...", "...", new Dictionary<string, object?> { ["enterprise"] = 1, ["datas"] = "..." });
 
 // With proxy
-await solver.RecaptchaAsync("...", "...", new()
+await solver.RecaptchaAsync("...", "...", new Dictionary<string, object?>
 {
     ["proxy"] = new Proxy("HTTPS", "user:pass@1.2.3.4:3128"),
 });
@@ -153,7 +154,7 @@ Do **not** send `invisible` for v3.
 ### SDK usage
 
 ```csharp
-await solver.RecaptchaAsync("...", "https://example.com", new()
+await solver.RecaptchaAsync("...", "https://example.com", new Dictionary<string, object?>
 {
     ["version"] = "v3",
     ["action"] = "submit",
@@ -202,7 +203,7 @@ Console.WriteLine(result.Code);
 Console.WriteLine(result.UserAgent);  // present when CapSkip returns it
 
 // Challenge page
-var challenge = await solver.TurnstileAsync("0x4AAAAAAA...", "https://example.com", new()
+var challenge = await solver.TurnstileAsync("0x4AAAAAAA...", "https://example.com", new Dictionary<string, object?>
 {
     ["action"] = "managed",
     ["data"] = "cData_value",
@@ -210,6 +211,69 @@ var challenge = await solver.TurnstileAsync("0x4AAAAAAA...", "https://example.co
 });
 // Use challenge.UserAgent when submitting the token
 ```
+
+---
+
+## 5. GeeTest v3 — `GeetestAsync(gt, challenge, url, options)`
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `geetest` |
+| `gt` | string | Yes | Static per-site GeeTest id |
+| `challenge` | string | Yes | Single-use challenge token |
+| `pageurl` | string | Yes | Full page URL |
+| `api_server` | string | No | GeeTest API server domain, e.g. `api-na.geetest.com` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | Proxy type |
+
+### Getting `gt` and `challenge`
+
+Both come from the target site, which fetches them from an endpoint returning
+`{"gt": "...", "challenge": "..."}` (often `.../register.php` or a `gettype`/`get.php`
+request). Find it in DevTools → Network, or read them out of the
+`initGeetest({ gt, challenge })` call in the page scripts.
+
+> **`challenge` is single-use and expires in about a minute.** Fetch a fresh pair
+> immediately before each solve. If a solve comes back with a bad-challenge error,
+> request a new pair and retry — reusing one never succeeds.
+
+### SDK usage
+
+```csharp
+var result = await solver.GeetestAsync(
+    "81388ea1fc187e0c335c0a8907ff2625",
+    "7cf6a8b1a2c34d5e6f7089abcdef0123",
+    "https://example.com/login");
+
+result.Challenge;   // geetest_challenge
+result.Validate;    // geetest_validate
+result.Seccode;     // geetest_seccode
+result.Code;        // the same answer as a raw JSON string
+```
+
+Post the three fields back exactly as the site's own front-end would:
+
+```csharp
+var body = new FormUrlEncodedContent(new Dictionary<string, string>
+{
+    ["geetest_challenge"] = result.Challenge!,
+    ["geetest_validate"] = result.Validate!,
+    ["geetest_seccode"] = result.Seccode!,
+});
+```
+
+Pass `api_server` when the site uses a non-default GeeTest API server domain:
+
+```csharp
+await solver.GeetestAsync(gt, challenge, url, new Dictionary<string, object?> { ["api_server"] = "api-na.geetest.com" });
+```
+
+GeeTest is a real browser solve, so it uses the longer `recaptchaTimeout` budget
+rather than `defaultTimeout`.
 
 ---
 
@@ -239,6 +303,8 @@ Convenience aliases mapped before sending to CapSkip:
 | `minScore` | `min_score` |
 | `datas` | `data-s` |
 | `data_s` | `data-s` |
+| `apiServer` | `api_server` |
+| `api_subdomain` | `api_server` |
 | `proxy` (`Proxy` / dictionary) | `proxy` + `proxytype` strings |
 
 ```csharp
@@ -258,7 +324,7 @@ Unsupported parameters (e.g. `numeric` on image captcha, `action` on v2) throw
 Submit without polling. Returns the captcha ID string.
 
 ```csharp
-var captchaId = await solver.SendAsync(new()
+var captchaId = await solver.SendAsync(new Dictionary<string, object?>
 {
     ["method"] = "userrecaptcha",
     ["googlekey"] = "...",
@@ -305,7 +371,7 @@ using CapSkip;
 
 var client = new ApiClient(host: "127.0.0.1", port: 8080);
 
-await client.InAsync(new()
+await client.InAsync(new Dictionary<string, object?>
 {
     ["method"] = "turnstile",
     ["key"] = "capskip",
@@ -313,7 +379,7 @@ await client.InAsync(new()
     ["pageurl"] = "...",
 });
 
-await client.ResAsync(new()
+await client.ResAsync(new Dictionary<string, object?>
 {
     ["key"] = "capskip",
     ["action"] = "get",

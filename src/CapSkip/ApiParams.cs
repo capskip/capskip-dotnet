@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace CapSkip
@@ -35,6 +36,19 @@ namespace CapSkip
             "proxy", "proxytype",
         };
 
+        internal static readonly HashSet<string> GeetestSubmit = new HashSet<string>
+        {
+            "method", "gt", "challenge", "pageurl", "api_server", "json",
+            "proxy", "proxytype",
+        };
+
+        /// <summary>
+        /// The only values CapSkip maps to a proxy scheme; it answers
+        /// ERROR_BAD_PARAMETERS for anything else, SOCKS4 included. Matched
+        /// case-insensitively, as the server does.
+        /// </summary>
+        internal static readonly string[] ProxyTypes = { "HTTP", "HTTPS", "SOCKS5", "SOCKS5H" };
+
         private static readonly IReadOnlyList<KeyValuePair<string, string>> ParamAliases =
             new List<KeyValuePair<string, string>>
             {
@@ -43,6 +57,8 @@ namespace CapSkip
                 new KeyValuePair<string, string>("minScore", "min_score"),
                 new KeyValuePair<string, string>("datas", "data-s"),
                 new KeyValuePair<string, string>("data_s", "data-s"),
+                new KeyValuePair<string, string>("apiServer", "api_server"),
+                new KeyValuePair<string, string>("api_subdomain", "api_server"),
             };
 
         /// <summary>Map friendly parameter names (e.g. <c>url</c>) to their API names (<c>pageurl</c>).</summary>
@@ -130,9 +146,39 @@ namespace CapSkip
                 case "turnstile":
                     ValidateTurnstileSubmit(prepared);
                     break;
+                case "geetest":
+                    ValidateGeetestSubmit(prepared);
+                    break;
+            }
+
+            // Skipped for "normal", which rejects proxy outright with a clearer message.
+            if (captchaType != "normal")
+            {
+                ValidateProxyType(prepared);
             }
 
             return prepared;
+        }
+
+        private static void ValidateProxyType(IDictionary<string, object?> parameters)
+        {
+            if (!parameters.TryGetValue("proxytype", out var proxytype) || proxytype is null)
+            {
+                return;
+            }
+
+            var text = Convert.ToString(proxytype, CultureInfo.InvariantCulture);
+            if (string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+
+            if (Array.IndexOf(ProxyTypes, text!.ToUpperInvariant()) < 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported proxytype '{text}'. "
+                    + $"CapSkip accepts: {string.Join(", ", ProxyTypes)}.");
+            }
         }
 
         private static void ValidateNormalSubmit(IDictionary<string, object?> parameters)
@@ -198,6 +244,28 @@ namespace CapSkip
             {
                 throw new ValidationException(
                     $"Unsupported parameters for Turnstile: {ReprList(unknown)}.");
+            }
+        }
+
+        private static void ValidateGeetestSubmit(IDictionary<string, object?> parameters)
+        {
+            // All three are documented as required. gt is static per site, challenge is
+            // single-use and expires in about a minute; without them CapSkip answers
+            // ERROR_BAD_PARAMETERS, and without pageurl ERROR_PAGEURL. Fail locally so a
+            // missing value does not cost a round-trip.
+            foreach (var key in new[] { "gt", "challenge", "pageurl" })
+            {
+                if (!parameters.TryGetValue(key, out var value) || !IsTruthy(value))
+                {
+                    throw new ValidationException($"'{key}' is required for GeeTest v3.");
+                }
+            }
+
+            var unknown = UnknownKeys(parameters, GeetestSubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for GeeTest: {ReprList(unknown)}.");
             }
         }
 

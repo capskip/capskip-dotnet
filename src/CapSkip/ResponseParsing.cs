@@ -139,6 +139,52 @@ namespace CapSkip
             return result;
         }
 
+        /// <summary>
+        /// Expand a GeeTest answer — a JSON string in <c>request</c>, keyed with the
+        /// <c>geetest_</c> prefix the target site's own form fields use — into
+        /// <see cref="SolveResult.Challenge"/>, <see cref="SolveResult.Validate"/>,
+        /// and <see cref="SolveResult.Seccode"/>.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="SolveResult.Code"/> keeps the raw JSON string so callers that
+        /// forward it verbatim (or that were written against another solver's API)
+        /// keep working. If it does not parse, the result is returned untouched
+        /// rather than masking the server's reply.
+        /// </remarks>
+        internal static SolveResult ApplyGeetestSolution(SolveResult result)
+        {
+            Dictionary<string, object?> payload;
+            try
+            {
+                payload = ParseJsonObject(result.Code ?? string.Empty);
+            }
+            catch (JsonException)
+            {
+                return result;
+            }
+
+            result.Challenge = GeetestField(payload, "geetest_challenge", "challenge") ?? result.Challenge;
+            result.Validate = GeetestField(payload, "geetest_validate", "validate") ?? result.Validate;
+            result.Seccode = GeetestField(payload, "geetest_seccode", "seccode") ?? result.Seccode;
+
+            return result;
+        }
+
+        private static string? GeetestField(IDictionary<string, object?> payload, string prefixed, string shortName)
+        {
+            if (payload.TryGetValue(prefixed, out var value) && value != null)
+            {
+                return Convert.ToString(value, CultureInfo.InvariantCulture);
+            }
+
+            if (payload.TryGetValue(shortName, out var fallback) && fallback != null)
+            {
+                return Convert.ToString(fallback, CultureInfo.InvariantCulture);
+            }
+
+            return null;
+        }
+
         private static Dictionary<string, object?> ParseJsonObject(string text)
         {
             using var doc = JsonDocument.Parse(text);

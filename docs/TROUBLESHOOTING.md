@@ -138,7 +138,7 @@ await solver.NormalAsync("data:image/png;base64,iVBORw0KGgo...");
 
 ```csharp
 var proxy = new Proxy("HTTP", "1.2.3.4:3128");
-var result = await solver.RecaptchaAsync("...", "...", new() { ["proxy"] = proxy });
+var result = await solver.RecaptchaAsync("...", "...", new Dictionary<string, object?> { ["proxy"] = proxy });
 // submit the form using the same proxy
 ```
 
@@ -151,6 +151,42 @@ var result = await solver.RecaptchaAsync("...", "...", new() { ["proxy"] = proxy
 **Fix:** For challenge pages, CapSkip returns a User-Agent that must be used when
 submitting the token. The SDK polls Turnstile with `json=1` automatically and exposes
 `result.UserAgent` — send it as the `User-Agent` header when you post the token.
+
+---
+
+## GeeTest keeps failing with a bad-challenge error
+
+**Symptom:** `GeetestAsync()` throws `ApiException` (or times out) even though `gt`
+and `challenge` were copied correctly from the page.
+
+**Cause:** The `challenge` value is **single-use and expires in about a minute**.
+A pair copied out of DevTools minutes earlier, cached in configuration, or reused
+across two solves is already dead.
+
+**Fix:** Fetch a fresh pair programmatically immediately before each solve, and on
+failure request a *new* pair rather than retrying the old one. If the site loads
+GeeTest from a non-default API server domain, pass it through as well:
+
+```csharp
+await solver.GeetestAsync(gt, challenge, url, new Dictionary<string, object?> { ["api_server"] = "api-na.geetest.com" });
+```
+
+---
+
+## GeeTest result — where are Challenge/Validate/Seccode?
+
+`result.Code` holds the raw JSON string CapSkip returns. The SDK also parses it for
+you, so prefer the individual properties:
+
+```csharp
+result.Challenge;   // geetest_challenge
+result.Validate;    // geetest_validate
+result.Seccode;     // geetest_seccode
+```
+
+Submit all three under their `geetest_`-prefixed names, exactly as the site's own
+front-end does. Sending only `validate` is the most common reason a correct solve
+is rejected.
 
 ---
 

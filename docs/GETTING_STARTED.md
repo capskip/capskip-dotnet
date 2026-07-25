@@ -135,6 +135,7 @@ dotnet run --project examples/CapSkip.Examples -- recaptcha
 | `image` | Image captcha from the bundled `captcha.png` |
 | `recaptcha` | reCAPTCHA v2 (Google's public test key) |
 | `turnstile` | Cloudflare Turnstile widget |
+| `geetest` | GeeTest v3 slider, including fetching a fresh `gt`/`challenge` pair |
 | `async` | Parallel concurrent solving |
 | `verify` | Check CapSkip is running |
 

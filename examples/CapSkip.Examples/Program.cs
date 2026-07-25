@@ -16,6 +16,9 @@ switch (command)
     case "turnstile":
         await TurnstileExample.RunAsync();
         break;
+    case "geetest":
+        await GeetestExample.RunAsync();
+        break;
     case "async":
         await AsyncExample.RunAsync();
         break;
@@ -28,6 +31,7 @@ switch (command)
         Console.WriteLine("  image      Solve the bundled image captcha (captcha.png)");
         Console.WriteLine("  recaptcha  Solve a reCAPTCHA v2 (Google's public test key)");
         Console.WriteLine("  turnstile  Solve a Cloudflare Turnstile (public test key)");
+        Console.WriteLine("  geetest    Solve a GeeTest v3 slider (fetches a fresh gt/challenge)");
         Console.WriteLine("  async      Solve several captchas concurrently");
         Console.WriteLine("  verify     Check CapSkip is running (accepts --host --port --api-key)");
         Console.WriteLine();
