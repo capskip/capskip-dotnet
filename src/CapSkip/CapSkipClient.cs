@@ -10,8 +10,8 @@ namespace CapSkip
 {
     /// <summary>
     /// Client for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3,
-    /// and Cloudflare Turnstile). Every solve method is asynchronous and returns a
-    /// <see cref="SolveResult"/>.
+    /// Cloudflare Turnstile, and GeeTest v3). Every solve method is asynchronous and
+    /// returns a <see cref="SolveResult"/>.
     /// </summary>
     public class CapSkipClient
     {
@@ -22,7 +22,7 @@ namespace CapSkip
         internal const double InitialPollingInterval = 0.25;
 
         /// <summary>The installed SDK version.</summary>
-        public static readonly string Version = "1.0.2";
+        public static readonly string Version = "1.1.0";
 
         /// <summary>CapSkip API key sent with every request.</summary>
         public string ApiKey { get; }
@@ -152,6 +152,50 @@ namespace CapSkip
             pars["poll_json"] = 1;
 
             return SolveAsync(pars, cancellationToken);
+        }
+
+        /// <summary>Solve a GeeTest v3 slider.</summary>
+        /// <param name="gt">Static per-site GeeTest id.</param>
+        /// <param name="challenge">
+        /// Single-use challenge token. It expires in about a minute, so fetch a fresh
+        /// <paramref name="gt"/>/<paramref name="challenge"/> pair immediately before
+        /// calling this.
+        /// </param>
+        /// <param name="url">Full URL of the page the captcha appears on.</param>
+        /// <param name="options">Optional <c>api_server</c> server-domain override and <c>proxy</c>.</param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result whose <see cref="SolveResult.Code"/> is the raw JSON answer, plus the
+        /// parsed <see cref="SolveResult.Challenge"/>, <see cref="SolveResult.Validate"/>,
+        /// and <see cref="SolveResult.Seccode"/> fields to post back to the target site.
+        /// </returns>
+        public async Task<SolveResult> GeetestAsync(
+            string gt,
+            string challenge,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // Like reCAPTCHA, this is a real browser solve (load, slide, verify) and can
+            // retry internally, so it gets the longer of the two timeouts unless the
+            // caller asked for a specific one.
+            var pars = new Dictionary<string, object?>
+            {
+                ["timeout"] = RecaptchaTimeout,
+                ["gt"] = gt,
+                ["challenge"] = challenge,
+                ["url"] = url,
+            };
+            foreach (var kv in Clone(options))
+            {
+                pars[kv.Key] = kv.Value;
+            }
+
+            pars["method"] = "geetest";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyGeetestSolution(result);
         }
 
         /// <summary>Submit then poll to completion. Used by the higher-level solve methods.</summary>
@@ -309,6 +353,11 @@ namespace CapSkip
             if (method == "turnstile")
             {
                 return ApiParams.PrepareSubmitParams(parameters, "turnstile");
+            }
+
+            if (method == "geetest")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "geetest");
             }
 
             return ApiParams.ApplyProxy(ApiParams.ApplyParamAliases(parameters));

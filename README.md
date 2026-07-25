@@ -6,7 +6,7 @@
 
 Official .NET / C# client for the [CapSkip](https://capskip.com) **local** captcha solver.
 
-CapSkip runs on your machine and exposes a standard captcha-solver HTTP API (the familiar `in.php` / `res.php` endpoints). This SDK wraps that API with clean, familiar method names, so you can solve captchas locally — no cloud service and no per-solve API fees beyond your CapSkip license.
+CapSkip runs on your machine and exposes a standard captcha-solver HTTP API (the familiar `in.php` / `res.php` endpoints). This SDK wraps that API with clean, familiar method names, so you can solve captchas locally — no per-solve API fees beyond your CapSkip license.
 
 Targets **.NET Standard 2.0**, so it runs on .NET 6/7/8/9+, .NET Core 2.0+, and .NET Framework 4.6.1+.
 
@@ -55,12 +55,13 @@ Every solve method is asynchronous — `await` it (or call `.GetAwaiter().GetRes
 |---|---|
 | Image CAPTCHA (distorted text) | `solver.NormalAsync(file)` |
 | reCAPTCHA v2 (checkbox) | `solver.RecaptchaAsync(sitekey, url)` |
-| reCAPTCHA v2 Invisible | `solver.RecaptchaAsync(sitekey, url, new() { ["invisible"] = 1 })` |
-| reCAPTCHA v2 Enterprise | `solver.RecaptchaAsync(sitekey, url, new() { ["enterprise"] = 1 })` |
-| reCAPTCHA v3 | `solver.RecaptchaAsync(sitekey, url, new() { ["version"] = "v3" })` |
-| reCAPTCHA v3 Enterprise | `solver.RecaptchaAsync(sitekey, url, new() { ["version"] = "v3", ["enterprise"] = 1 })` |
+| reCAPTCHA v2 Invisible | `solver.RecaptchaAsync(sitekey, url, new Dictionary<string, object?> { ["invisible"] = 1 })` |
+| reCAPTCHA v2 Enterprise | `solver.RecaptchaAsync(sitekey, url, new Dictionary<string, object?> { ["enterprise"] = 1 })` |
+| reCAPTCHA v3 | `solver.RecaptchaAsync(sitekey, url, new Dictionary<string, object?> { ["version"] = "v3" })` |
+| reCAPTCHA v3 Enterprise | `solver.RecaptchaAsync(sitekey, url, new Dictionary<string, object?> { ["version"] = "v3", ["enterprise"] = 1 })` |
 | Cloudflare Turnstile (widget) | `solver.TurnstileAsync(sitekey, url)` |
-| Cloudflare Turnstile (challenge page) | `solver.TurnstileAsync(sitekey, url, new() { ["data"] = ..., ["pagedata"] = ... })` |
+| Cloudflare Turnstile (challenge page) | `solver.TurnstileAsync(sitekey, url, new Dictionary<string, object?> { ["data"] = ..., ["pagedata"] = ... })` |
+| GeeTest v3 (slide) | `solver.GeetestAsync(gt, challenge, url)` |
 
 ---
 
@@ -88,7 +89,7 @@ var solver = new CapSkipClient(
     host: "127.0.0.1",        // CapSkip host
     port: 8080,               // CapSkip port from app settings
     defaultTimeout: 120,      // seconds — image captcha polling timeout
-    recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile polling timeout
+    recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest polling timeout
     pollingInterval: 5);      // max seconds between res.php polls (starts at 0.25s, backs off to this)
 ```
 
@@ -137,7 +138,7 @@ await solver.NormalAsync("data:image/png;base64,iVBORw0KGgo...");
 var v2 = await solver.RecaptchaAsync("...", "https://example.com");
 
 // reCAPTCHA v3
-var v3 = await solver.RecaptchaAsync("...", "https://example.com", new()
+var v3 = await solver.RecaptchaAsync("...", "https://example.com", new Dictionary<string, object?>
 {
     ["version"] = "v3",
     ["action"] = "submit",
@@ -151,15 +152,30 @@ var v3 = await solver.RecaptchaAsync("...", "https://example.com", new()
 var result = await solver.TurnstileAsync("0x4AAAAAAA...", "https://example.com");
 ```
 
-### With a proxy (reCAPTCHA & Turnstile only)
+### GeeTest v3
+
+`gt` is static per site, but `challenge` is single-use and expires in about a
+minute — fetch a fresh pair right before solving.
+
+```csharp
+var result = await solver.GeetestAsync(
+    "81388ea1fc187e0c335c0a8907ff2625",
+    "7cf6a8b1a2c34d5e6f7089abcdef0123",
+    "https://example.com/login");
+
+// Post these back exactly as the site's own front-end would
+result.Challenge; result.Validate; result.Seccode;
+```
+
+### With a proxy (reCAPTCHA, Turnstile & GeeTest only)
 
 ```csharp
 // Proxy is not supported for image captcha
-await solver.RecaptchaAsync("...", "https://example.com", new()
+await solver.RecaptchaAsync("...", "https://example.com", new Dictionary<string, object?>
 {
     ["proxy"] = new Proxy("HTTPS", "user:pass@1.2.3.4:3128"),
 });
-await solver.TurnstileAsync("...", "https://example.com", new()
+await solver.TurnstileAsync("...", "https://example.com", new Dictionary<string, object?>
 {
     ["proxy"] = new Proxy("HTTP", "1.2.3.4:3128"),
 });
@@ -194,6 +210,9 @@ public sealed class SolveResult
     public string CaptchaId { get; }  // internal ID from CapSkip
     public string Code { get; }       // solution — text for image, token for reCAPTCHA/Turnstile
     public string? UserAgent { get; } // Turnstile only — use when submitting challenge-page tokens
+    public string? Challenge { get; } // GeeTest only — geetest_challenge
+    public string? Validate  { get; } // GeeTest only — geetest_validate
+    public string? Seccode   { get; } // GeeTest only — geetest_seccode
 }
 ```
 

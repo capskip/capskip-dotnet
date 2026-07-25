@@ -12,14 +12,15 @@ Work through it top to bottom, or jump to the section you need.
 5. [reCAPTCHA v2](#5-recaptcha-v2)
 6. [reCAPTCHA v3](#6-recaptcha-v3)
 7. [Cloudflare Turnstile](#7-cloudflare-turnstile)
-8. [Using a proxy](#8-using-a-proxy)
-9. [Concurrency](#9-concurrency)
-10. [The manual workflow](#10-the-manual-workflow)
-11. [Return values](#11-return-values)
-12. [Error handling](#12-error-handling)
-13. [End-to-end: solve and submit](#13-end-to-end-solve-and-submit)
-14. [Parameter reference](#14-parameter-reference)
-15. [Best practices](#15-best-practices)
+8. [GeeTest v3](#8-geetest-v3)
+9. [Using a proxy](#9-using-a-proxy)
+10. [Concurrency](#10-concurrency)
+11. [The manual workflow](#11-the-manual-workflow)
+12. [Return values](#12-return-values)
+13. [Error handling](#13-error-handling)
+14. [End-to-end: solve and submit](#14-end-to-end-solve-and-submit)
+15. [Parameter reference](#15-parameter-reference)
+16. [Best practices](#16-best-practices)
 
 ---
 
@@ -69,7 +70,7 @@ var solver = new CapSkipClient(
     host: "127.0.0.1",        // where CapSkip is listening
     port: 8080,               // API port from CapSkip settings
     defaultTimeout: 120,      // seconds to wait for an image captcha
-    recaptchaTimeout: 300,    // seconds to wait for reCAPTCHA / Turnstile
+    recaptchaTimeout: 300,    // seconds to wait for reCAPTCHA / Turnstile / GeeTest
     pollingInterval: 5);      // max seconds between result polls (starts at 0.25s, backs off to this)
 ```
 
@@ -131,11 +132,11 @@ Image captcha accepts only one extra option, `json`, which controls the raw
 response format from CapSkip:
 
 ```csharp
-var result = await solver.NormalAsync("captcha.png", new() { ["json"] = 1 });
+var result = await solver.NormalAsync("captcha.png", new Dictionary<string, object?> { ["json"] = 1 });
 ```
 
 > **Note:** Proxies are **not** supported for image captcha — passing one throws
-> `ValidationException`. Proxies apply only to reCAPTCHA and Turnstile.
+> `ValidationException`. Proxies apply only to reCAPTCHA, Turnstile, and GeeTest.
 
 ---
 
@@ -152,13 +153,13 @@ var result = await solver.RecaptchaAsync(
     "https://example.com/login");
 
 // Invisible reCAPTCHA v2
-await solver.RecaptchaAsync("6Le-wvkS...", "https://example.com", new() { ["invisible"] = 1 });
+await solver.RecaptchaAsync("6Le-wvkS...", "https://example.com", new Dictionary<string, object?> { ["invisible"] = 1 });
 
 // Enterprise reCAPTCHA v2
-await solver.RecaptchaAsync("6Le-wvkS...", "https://example.com", new() { ["enterprise"] = 1 });
+await solver.RecaptchaAsync("6Le-wvkS...", "https://example.com", new Dictionary<string, object?> { ["enterprise"] = 1 });
 
 // Enterprise with a data-s value (SDK alias: datas)
-await solver.RecaptchaAsync("6Le-wvkS...", "https://example.com", new()
+await solver.RecaptchaAsync("6Le-wvkS...", "https://example.com", new Dictionary<string, object?>
 {
     ["enterprise"] = 1,
     ["datas"] = "Crb7Vs...",
@@ -178,7 +179,7 @@ reCAPTCHA v3 is score-based. Pass `version = "v3"` plus the `action` your target
 uses and, optionally, a minimum score.
 
 ```csharp
-var result = await solver.RecaptchaAsync("6Le-wvkS...", "https://example.com", new()
+var result = await solver.RecaptchaAsync("6Le-wvkS...", "https://example.com", new Dictionary<string, object?>
 {
     ["version"] = "v3",
     ["action"] = "submit",   // must match the action in grecaptcha.execute()
@@ -206,10 +207,10 @@ Console.WriteLine(result.Code);        // cf-turnstile-response token
 Console.WriteLine(result.UserAgent);   // present when CapSkip returns it
 
 // With an explicit action
-await solver.TurnstileAsync("0x4AAAAAAA...", "https://example.com", new() { ["action"] = "login" });
+await solver.TurnstileAsync("0x4AAAAAAA...", "https://example.com", new Dictionary<string, object?> { ["action"] = "login" });
 
 // Cloudflare challenge page (needs cData and chlPageData from the page)
-await solver.TurnstileAsync("0x4AAAAAAA...", "https://example.com", new()
+await solver.TurnstileAsync("0x4AAAAAAA...", "https://example.com", new Dictionary<string, object?>
 {
     ["action"] = "managed",
     ["data"] = "your_cData_value",
@@ -223,25 +224,97 @@ await solver.TurnstileAsync("0x4AAAAAAA...", "https://example.com", new()
 
 ---
 
-## 8. Using a proxy
+## 8. GeeTest v3
+
+`solver.GeetestAsync(gt, challenge, url)` solves the GeeTest v3 slide puzzle.
+
+### Finding `gt` and `challenge`
+
+Unlike a sitekey, GeeTest needs **two** values, and one of them is short-lived:
+
+| Value | Lifetime | Where it comes from |
+|---|---|---|
+| `gt` | Static per site | The same place as `challenge` |
+| `challenge` | **Single-use, expires in ~1 minute** | An endpoint the site calls that returns `{"gt": "...", "challenge": "..."}` |
+
+Open DevTools → Network on the target page and look for a request to something like
+`.../register.php`, `gettype`, or `get.php`. You can also read the values out of the
+`initGeetest({ gt, challenge })` call in the page scripts.
+
+```csharp
+// Ask the target site for a fresh pair immediately before solving.
+using var http = new HttpClient();
+var body = await http.GetStringAsync("https://example.com/captcha/register.php");
+using var doc = JsonDocument.Parse(body);
+
+var result = await solver.GeetestAsync(
+    doc.RootElement.GetProperty("gt").GetString()!,
+    doc.RootElement.GetProperty("challenge").GetString()!,
+    "https://example.com/login");
+```
+
+### Using the answer
+
+The result carries the three values the site's own front-end would submit:
+
+```csharp
+result.Challenge;   // geetest_challenge
+result.Validate;    // geetest_validate
+result.Seccode;     // geetest_seccode
+
+result.Code;        // the same answer as a raw JSON string
+```
+
+Post them back exactly as the site expects:
+
+```csharp
+var form = new FormUrlEncodedContent(new Dictionary<string, string>
+{
+    ["username"] = "...",
+    ["password"] = "...",
+    ["geetest_challenge"] = result.Challenge!,
+    ["geetest_validate"] = result.Validate!,
+    ["geetest_seccode"] = result.Seccode!,
+});
+await http.PostAsync("https://example.com/login", form);
+```
+
+> **`challenge` is one-shot.** Never cache or reuse a pair. If a solve fails with a
+> bad-challenge error, request a *new* pair and retry — retrying with the same
+> `challenge` can never succeed.
+
+If the site uses a non-default GeeTest API server domain, pass it through:
+
+```csharp
+await solver.GeetestAsync(gt, challenge, url, new Dictionary<string, object?> { ["api_server"] = "api-na.geetest.com" });
+```
+
+Because GeeTest is a real browser solve (load, slide, verify), it uses the longer
+`recaptchaTimeout` budget rather than `defaultTimeout`.
+
+---
+
+## 9. Using a proxy
 
 Solving through the same IP you will submit from greatly improves acceptance rates
-for reCAPTCHA and Turnstile. Pass the proxy as a `Proxy` object (or a dictionary
+for reCAPTCHA, Turnstile, and GeeTest. Pass the proxy as a `Proxy` object (or a dictionary
 with `type` and `uri` keys):
 
 ```csharp
 var proxy = new Proxy("HTTPS", "user:pass@1.2.3.4:3128");
 
-await solver.RecaptchaAsync("...", "https://example.com", new() { ["proxy"] = proxy });
-await solver.TurnstileAsync("...", "https://example.com", new() { ["proxy"] = proxy });
+await solver.RecaptchaAsync("...", "https://example.com", new Dictionary<string, object?> { ["proxy"] = proxy });
+await solver.TurnstileAsync("...", "https://example.com", new Dictionary<string, object?> { ["proxy"] = proxy });
 ```
 
-Supported proxy types: `HTTP`, `HTTPS`, `SOCKS5`, `SOCKS5H`. The `Uri` may include
+Supported proxy types: `HTTP`, `HTTPS`, `SOCKS5`, `SOCKS5H` — matched
+case-insensitively. Anything else (including `SOCKS4`) raises
+`ValidationException` before the request is sent. The `Uri` may include
 credentials (`login:password@host:port`) or be a bare `host:port`.
 
 ---
 
-## 9. Concurrency
+## 10. Concurrency
 
 Every solve method returns a `Task`, so you can solve many captchas at once with
 `Task.WhenAll`:
@@ -253,7 +326,7 @@ var solver = new CapSkipClient(host: "127.0.0.1", port: 8080);
 
 var results = await Task.WhenAll(
     solver.RecaptchaAsync("...", "https://a.com"),
-    solver.RecaptchaAsync("...", "https://b.com", new() { ["version"] = "v3", ["action"] = "submit" }),
+    solver.RecaptchaAsync("...", "https://b.com", new Dictionary<string, object?> { ["version"] = "v3", ["action"] = "submit" }),
     solver.TurnstileAsync("0x4A...", "https://c.com"));
 
 Console.WriteLine($"{results[0].Code} {results[1].Code} {results[2].Code}");
@@ -265,7 +338,7 @@ by nature.
 
 ---
 
-## 10. The manual workflow
+## 11. The manual workflow
 
 If you want to submit now and collect the answer later, use the two low-level steps
 directly.
@@ -274,7 +347,7 @@ directly.
 using CapSkip;
 
 // 1. Submit — returns the captcha ID immediately, without waiting.
-var captchaId = await solver.SendAsync(new()
+var captchaId = await solver.SendAsync(new Dictionary<string, object?>
 {
     ["method"] = "userrecaptcha",
     ["googlekey"] = "6Le-wvkS...",
@@ -305,7 +378,7 @@ Turnstile) instead of a plain string; it comes back as a
 
 ---
 
-## 11. Return values
+## 12. Return values
 
 Every high-level solve method (`NormalAsync`, `RecaptchaAsync`, `TurnstileAsync`,
 `SolveAsync`) returns a `SolveResult`:
@@ -324,7 +397,7 @@ string (or a `Dictionary<string, object?>` when `json: 1`).
 
 ---
 
-## 12. Error handling
+## 13. Error handling
 
 The SDK throws four exception types, all subclasses of `CapSkipError`:
 
@@ -371,7 +444,7 @@ catch (CapSkipError e)
 
 ---
 
-## 13. End-to-end: solve and submit
+## 14. End-to-end: solve and submit
 
 A realistic flow — solve a reCAPTCHA, then submit the token to the target site
 through the **same** proxy:
@@ -393,7 +466,7 @@ var proxy = new Proxy("HTTP", "1.2.3.4:3128");
 SolveResult solved;
 try
 {
-    solved = await solver.RecaptchaAsync(sitekey, loginUrl, new() { ["proxy"] = proxy });
+    solved = await solver.RecaptchaAsync(sitekey, loginUrl, new Dictionary<string, object?> { ["proxy"] = proxy });
 }
 catch (CapSkipError e)
 {
@@ -419,7 +492,7 @@ Console.WriteLine((int)response.StatusCode);
 For Turnstile challenge pages, also set the User-Agent header:
 
 ```csharp
-var solved = await solver.TurnstileAsync("0x4A...", challengeUrl, new()
+var solved = await solver.TurnstileAsync("0x4A...", challengeUrl, new Dictionary<string, object?>
 {
     ["data"] = "cData",
     ["pagedata"] = "chlPageData",
@@ -435,7 +508,7 @@ await http.PostAsync(challengeUrl, new FormUrlEncodedContent(new Dictionary<stri
 
 ---
 
-## 14. Parameter reference
+## 15. Parameter reference
 
 ### Solve methods
 
@@ -444,11 +517,17 @@ await http.PostAsync(challengeUrl, new FormUrlEncodedContent(new Dictionary<stri
 | Image | `NormalAsync(file, options?)` |
 | reCAPTCHA | `RecaptchaAsync(sitekey, url, options?)` |
 | Turnstile | `TurnstileAsync(sitekey, url, options?)` |
+| GeeTest v3 | `GeetestAsync(gt, challenge, url, options?)` |
 | Manual submit | `SendAsync(parameters) → id` |
 | Manual poll | `GetResultAsync(id, json = 0)` |
 
 `options` is an `IDictionary<string, object?>` — build it with a collection
-initializer: `new() { ["version"] = "v3" }`.
+initializer: `new Dictionary<string, object?> { ["version"] = "v3" }`.
+
+> Name the type explicitly. A target-typed `new() { ... }` does **not** compile
+> here, because the parameter is the *interface* `IDictionary<string, object?>`
+> and interfaces cannot be instantiated (`CS0144`). On projects without
+> `ImplicitUsings`, add `using System.Collections.Generic;`.
 
 ### Convenience aliases
 
@@ -459,6 +538,7 @@ The SDK accepts friendly names and converts them to the raw API parameters:
 | `url` | `pageurl` |
 | `score`, `minScore` | `min_score` |
 | `datas`, `data_s` | `data-s` |
+| `apiServer`, `api_subdomain` | `api_server` |
 | `proxy` (`Proxy` or dictionary) | `proxy` + `proxytype` strings |
 
 Anything CapSkip does not document for a given captcha type is rejected with
@@ -466,14 +546,17 @@ Anything CapSkip does not document for a given captcha type is rejected with
 
 ---
 
-## 15. Best practices
+## 16. Best practices
 
 - **Keep CapSkip running.** The SDK talks to a local app; if it is not running you
   get `NetworkException`.
 - **Use the token immediately.** reCAPTCHA and Turnstile tokens expire within a
   couple of minutes.
 - **Match sitekey and pageurl exactly** to the page the widget loads on.
-- **Solve and submit from the same IP** (same proxy) for reCAPTCHA and Turnstile.
+- **Fetch a fresh GeeTest `challenge` per solve.** It is single-use and expires in
+  about a minute; a cached pair always fails.
+- **Solve and submit from the same IP** (same proxy) for reCAPTCHA, Turnstile, and
+  GeeTest.
 - **Never commit secrets.** Read `CAPSKIP_API_KEY` and proxy credentials from the
   environment, not source code.
 - **Tune timeouts** for slow captcha types with `recaptchaTimeout` and
