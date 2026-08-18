@@ -13,13 +13,13 @@
     <Version>1.1.0</Version>
     <Authors>CapSkip</Authors>
     <Company>CapSkip</Company>
-    <Description>.NET SDK for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3, Cloudflare Turnstile, GeeTest v3).</Description>
+    <Description>Captcha solver for C# and .NET: solve reCAPTCHA v2/v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3 and image captchas with CapSkip, a local unlimited captcha solver with no per-solve fees. Works with Selenium, Playwright and PuppeteerSharp, and doubles as a 2captcha API alternative.</Description>
     <PackageProjectUrl>https://capskip.com</PackageProjectUrl>
     <RepositoryUrl>https://github.com/capskip/capskip-dotnet</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>captcha;captcha-solver;recaptcha;cloudflare;turnstile;geetest;capskip;automation</PackageTags>
+    <PackageTags>captcha;captcha-solver;captcha-solving;captcha-bypass;unlimited-captcha-solver;local-captcha-solver;free-captcha-solver;recaptcha;recaptcha-solver;recaptcha-v2;recaptcha-v3;recaptcha-enterprise;cloudflare;turnstile;turnstile-solver;cloudflare-turnstile;geetest;geetest-solver;image-captcha;ocr;2captcha-alternative;anti-captcha-alternative;selenium;playwright;puppeteersharp;browser-automation;web-scraping;capskip;automation</PackageTags>
     <PackageReleaseNotes>See CHANGELOG.md for release history.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
