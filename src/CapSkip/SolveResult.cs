@@ -3,7 +3,8 @@ namespace CapSkip
     /// <summary>
     /// The result every solve method returns. Mirrors the dictionary the other
     /// CapSkip SDKs return (<c>captchaId</c>, <c>code</c>, for Turnstile
-    /// <c>userAgent</c>, and for GeeTest <c>challenge</c>/<c>validate</c>/<c>seccode</c>).
+    /// <c>userAgent</c>, for GeeTest <c>challenge</c>/<c>validate</c>/<c>seccode</c>, and for
+    /// ALTCHA <c>token</c>/<c>number</c>).
     /// </summary>
     public sealed class SolveResult
     {
@@ -42,9 +43,28 @@ namespace CapSkip
         /// </summary>
         public string? Seccode { get; set; }
 
+        /// <summary>
+        /// ALTCHA only — the base64 payload to post back in the site's <c>altcha</c>
+        /// form field. The same string as <see cref="Code"/>, named for where it
+        /// goes. <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? Token { get; set; }
+
+        /// <summary>
+        /// ALTCHA only — the counter that solved the challenge.
+        /// <see langword="null"/> for other captcha types.
+        /// </summary>
+        public long? Number { get; set; }
+
         /// <summary>A compact, human-readable representation for logging.</summary>
         public override string ToString()
         {
+            if (Number != null)
+            {
+                return $"SolveResult {{ CaptchaId = {CaptchaId}, Number = {Number}, "
+                    + $"Token = {Token} }}";
+            }
+
             if (Validate != null)
             {
                 return $"SolveResult {{ CaptchaId = {CaptchaId}, Challenge = {Challenge}, "

@@ -10,7 +10,8 @@ namespace CapSkip
 {
     /// <summary>
     /// Client for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3,
-    /// Cloudflare Turnstile, and GeeTest v3). Every solve method is asynchronous and
+    /// Cloudflare Turnstile, GeeTest v3, and ALTCHA). Every solve method is asynchronous
+    /// and
     /// returns a <see cref="SolveResult"/>.
     /// </summary>
     public class CapSkipClient
@@ -198,6 +199,57 @@ namespace CapSkip
             return ResponseParsing.ApplyGeetestSolution(result);
         }
 
+        /// <summary>Solve an ALTCHA proof-of-work challenge.</summary>
+        /// <param name="url">Full URL of the page the challenge came from.</param>
+        /// <param name="options">
+        /// Either <c>challenge_url</c>, which CapSkip fetches the challenge from, or
+        /// <c>challenge_json</c> with the document itself (a JSON string, or a
+        /// dictionary which is serialized for you). Sending both is allowed — the
+        /// inline document wins. A <c>proxy</c> applies only to the
+        /// <c>challenge_url</c> fetch.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result whose <see cref="SolveResult.Token"/> is the base64 payload the
+        /// site's <c>altcha</c> form field expects, verbatim, plus
+        /// <see cref="SolveResult.Number"/>, the counter that solved it.
+        /// <see cref="SolveResult.Code"/> holds the same string as the token.
+        /// </returns>
+        /// <remarks>
+        /// Challenges expire fast — some sites inside two minutes — and an expired one
+        /// is refused with a bare "verification failed" that looks exactly like a
+        /// wrong answer. Fetch the challenge immediately before calling, and post the
+        /// token promptly.
+        /// </remarks>
+        public async Task<SolveResult> AltchaAsync(
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // Unlike GeeTest and reCAPTCHA this is CPU proof-of-work measured in
+            // milliseconds, not a browser solve, so it keeps the default timeout.
+            var pars = new Dictionary<string, object?>
+            {
+                ["url"] = url,
+            };
+
+            // An unset challenge param is dropped rather than sent as null, so
+            // passing both keys with one left out works.
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "altcha";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyAltchaSolution(result);
+        }
+
         /// <summary>Submit then poll to completion. Used by the higher-level solve methods.</summary>
         public async Task<SolveResult> SolveAsync(
             IDictionary<string, object?> options,
@@ -358,6 +410,11 @@ namespace CapSkip
             if (method == "geetest")
             {
                 return ApiParams.PrepareSubmitParams(parameters, "geetest");
+            }
+
+            if (method == "altcha")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "altcha");
             }
 
             return ApiParams.ApplyProxy(ApiParams.ApplyParamAliases(parameters));

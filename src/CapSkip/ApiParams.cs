@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text.Json;
 
 namespace CapSkip
 {
@@ -42,6 +43,12 @@ namespace CapSkip
             "proxy", "proxytype",
         };
 
+        internal static readonly HashSet<string> AltchaSubmit = new HashSet<string>
+        {
+            "method", "pageurl", "challenge_url", "challenge_json", "json",
+            "proxy", "proxytype",
+        };
+
         /// <summary>
         /// The only values CapSkip maps to a proxy scheme; it answers
         /// ERROR_BAD_PARAMETERS for anything else, SOCKS4 included. Matched
@@ -59,6 +66,10 @@ namespace CapSkip
                 new KeyValuePair<string, string>("data_s", "data-s"),
                 new KeyValuePair<string, string>("apiServer", "api_server"),
                 new KeyValuePair<string, string>("api_subdomain", "api_server"),
+                new KeyValuePair<string, string>("challengeUrl", "challenge_url"),
+                new KeyValuePair<string, string>("challengeURL", "challenge_url"),
+                new KeyValuePair<string, string>("challengeJson", "challenge_json"),
+                new KeyValuePair<string, string>("challengeJSON", "challenge_json"),
             };
 
         /// <summary>Map friendly parameter names (e.g. <c>url</c>) to their API names (<c>pageurl</c>).</summary>
@@ -148,6 +159,10 @@ namespace CapSkip
                     break;
                 case "geetest":
                     ValidateGeetestSubmit(prepared);
+                    break;
+                case "altcha":
+                    prepared = NormalizeAltchaSubmit(prepared);
+                    ValidateAltchaSubmit(prepared);
                     break;
             }
 
@@ -266,6 +281,65 @@ namespace CapSkip
             {
                 throw new ValidationException(
                     $"Unsupported parameters for GeeTest: {ReprList(unknown)}.");
+            }
+        }
+
+        /// <summary>
+        /// Drop unset challenge params and serialize an inline challenge document.
+        /// </summary>
+        /// <remarks>
+        /// <c>AltchaAsync</c> is normally called with one of the two challenge
+        /// parameters left null, and the form body can only carry a string — so a
+        /// document passed as a dictionary is serialized rather than ToString()'d
+        /// into its type name. Mirrors the server, which reads a JSON-body
+        /// <c>null</c> as "not sent".
+        /// </remarks>
+        private static Dictionary<string, object?> NormalizeAltchaSubmit(
+            IDictionary<string, object?> parameters)
+        {
+            var outParams = new Dictionary<string, object?>();
+            foreach (var pair in parameters)
+            {
+                if (pair.Value != null)
+                {
+                    outParams[pair.Key] = pair.Value;
+                }
+            }
+
+            if (outParams.TryGetValue("challenge_json", out var challenge)
+                && challenge != null
+                && !(challenge is string))
+            {
+                outParams["challenge_json"] = JsonSerializer.Serialize(challenge);
+            }
+
+            return outParams;
+        }
+
+        private static void ValidateAltchaSubmit(IDictionary<string, object?> parameters)
+        {
+            if (!parameters.TryGetValue("pageurl", out var pageurl) || !IsTruthy(pageurl))
+            {
+                throw new ValidationException("'pageurl' is required for ALTCHA.");
+            }
+
+            // CapSkip answers ERROR_BAD_PARAMETERS when neither is sent. Sending both
+            // is deliberately allowed — the inline document simply wins, because
+            // fetching would only re-obtain what the caller already supplied.
+            var hasUrl = parameters.TryGetValue("challenge_url", out var url) && IsTruthy(url);
+            var hasJson = parameters.TryGetValue("challenge_json", out var json) && IsTruthy(json);
+            if (!hasUrl && !hasJson)
+            {
+                throw new ValidationException(
+                    "ALTCHA needs a challenge: pass 'challenge_url' for CapSkip to fetch it, "
+                    + "or 'challenge_json' with the challenge document itself.");
+            }
+
+            var unknown = UnknownKeys(parameters, AltchaSubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for ALTCHA: {ReprList(unknown)}.");
             }
         }
 

@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://github.com/capskip/capskip-dotnet/actions/workflows/ci.yml/badge.svg)](https://github.com/capskip/capskip-dotnet/actions/workflows/ci.yml)
 
-**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest and image captchas from C#.**
+**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA and image captchas from C#.**
 
 Official .NET client for [CapSkip](https://capskip.com), a **local captcha solver** that runs on your own machine. Licensed once, not billed per solve.
 
@@ -36,6 +36,7 @@ This SDK is a thin wrapper over that API, with the method names you would expect
 | **Cloudflare Turnstile solver** (widget) | `solver.TurnstileAsync(sitekey, url)` |
 | Cloudflare Turnstile (challenge page) | `TurnstileAsync(sitekey, url, new() { ["data"] = ..., ["pagedata"] = ... })` |
 | **GeeTest v3 solver** (slide puzzle) | `solver.GeetestAsync(gt, challenge, url)` |
+| **ALTCHA solver** (proof-of-work) | `solver.AltchaAsync(url, options)` |
 
 The options argument is a `Dictionary<string, object?>` — the table shortens it to `new() { ... }` to stay readable; full signatures are in the [API Reference](docs/API_REFERENCE.md).
 
@@ -124,6 +125,7 @@ var solver = new CapSkipClient(
     port: 8080,               // CapSkip port from app settings
     defaultTimeout: 120,      // seconds — image captcha polling timeout
     recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest polling timeout
+                              // (ALTCHA uses defaultTimeout — CPU work, not a browser solve)
     pollingInterval: 5);      // max seconds between res.php polls (starts at 0.25s, backs off to this)
 ```
 
@@ -201,7 +203,28 @@ var result = await solver.GeetestAsync(
 result.Challenge; result.Validate; result.Seccode;
 ```
 
-### With a proxy (reCAPTCHA, Turnstile & GeeTest only)
+### ALTCHA
+
+ALTCHA is proof-of-work, not recognition — there is nothing to read, so a solve
+is deterministic and takes milliseconds. Give CapSkip the endpoint that serves
+the challenge, or the challenge document itself.
+
+```csharp
+var result = await solver.AltchaAsync(
+    "https://example.com/signup",
+    new Dictionary<string, object?>
+    {
+        ["challenge_url"] = "https://example.com/captcha/api/altcha/challenge",
+    });
+
+// Post this back in the form field the widget uses, named `altcha`
+result.Token;
+```
+
+Challenges expire fast — some sites inside two minutes — so fetch one
+immediately before solving and submit the token promptly.
+
+### With a proxy (reCAPTCHA, Turnstile, GeeTest & ALTCHA only)
 
 ```csharp
 // Proxy is not supported for image captcha
@@ -280,6 +303,8 @@ public sealed class SolveResult
     public string? Challenge { get; } // GeeTest only — geetest_challenge
     public string? Validate  { get; } // GeeTest only — geetest_validate
     public string? Seccode   { get; } // GeeTest only — geetest_seccode
+    public string? Token     { get; } // ALTCHA only — the payload to post back
+    public long?   Number    { get; } // ALTCHA only — the counter that solved it
 }
 ```
 
@@ -322,7 +347,7 @@ The SDK itself is MIT-licensed and free. Solving needs the CapSkip app, which is
 
 ### Which captchas can it solve?
 
-reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, and image/text captchas. Not hCaptcha, and not FunCaptcha/Arkose.
+reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, and image/text captchas. Not hCaptcha, and not FunCaptcha/Arkose.
 
 ### Does it work with Selenium and Playwright?
 

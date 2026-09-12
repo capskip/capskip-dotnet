@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 
 namespace CapSkip
@@ -166,6 +167,65 @@ namespace CapSkip
             result.Challenge = GeetestField(payload, "geetest_challenge", "challenge") ?? result.Challenge;
             result.Validate = GeetestField(payload, "geetest_validate", "validate") ?? result.Validate;
             result.Seccode = GeetestField(payload, "geetest_seccode", "seccode") ?? result.Seccode;
+
+            return result;
+        }
+
+        /// <summary>
+        /// Expose the ALTCHA answer as <see cref="SolveResult.Token"/>, and the
+        /// winning counter as <see cref="SolveResult.Number"/>.
+        /// </summary>
+        /// <remarks>
+        /// ALTCHA answers come back as a base64 payload: the challenge document with
+        /// the winning counter added. That payload is what the site's own
+        /// <c>altcha</c> form field carries, so it is posted back verbatim.
+        /// <see cref="SolveResult.Code"/> keeps the raw answer so callers that
+        /// forward it (or that were written against another solver's API) keep
+        /// working. If the payload does not decode, the result is returned untouched
+        /// rather than masking the server's reply.
+        /// </remarks>
+        internal static SolveResult ApplyAltchaSolution(SolveResult result)
+        {
+            var code = result.Code ?? string.Empty;
+            result.Token = code;
+
+            byte[] decoded;
+            try
+            {
+                decoded = Convert.FromBase64String(code);
+            }
+            catch (FormatException)
+            {
+                return result;
+            }
+
+            Dictionary<string, object?> payload;
+            try
+            {
+                payload = ParseJsonObject(Encoding.UTF8.GetString(decoded));
+            }
+            catch (JsonException)
+            {
+                return result;
+            }
+            catch (DecoderFallbackException)
+            {
+                return result;
+            }
+
+            if (payload.TryGetValue("number", out var number) && number != null)
+            {
+                try
+                {
+                    result.Number = Convert.ToInt64(number, CultureInfo.InvariantCulture);
+                }
+                catch (Exception ex) when (ex is FormatException || ex is InvalidCastException
+                    || ex is OverflowException)
+                {
+                    // A non-numeric "number" is the server telling us something we do
+                    // not model; leave it out rather than failing the whole solve.
+                }
+            }
 
             return result;
         }

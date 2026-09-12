@@ -10,10 +10,10 @@
 
     <!-- NuGet package metadata -->
     <PackageId>CapSkip</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>CapSkip</Authors>
     <Company>CapSkip</Company>
-    <Description>Captcha solver for C# and .NET: solve reCAPTCHA v2/v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3 and image captchas with CapSkip, a local unlimited captcha solver with no per-solve fees. Works with Selenium, Playwright and PuppeteerSharp, and doubles as a 2captcha API alternative.</Description>
+    <Description>Captcha solver for C# and .NET: solve reCAPTCHA v2/v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA and image captchas with CapSkip, a local unlimited captcha solver with no per-solve fees. Works with Selenium, Playwright and PuppeteerSharp, and doubles as a 2captcha API alternative.</Description>
     <PackageProjectUrl>https://capskip.com</PackageProjectUrl>
     <RepositoryUrl>https://github.com/capskip/capskip-dotnet</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
