@@ -131,6 +131,17 @@ namespace CapSkip
                 {
                     result.UserAgent = userAgentText;
                 }
+
+                // ALTCHA's createTask-shaped "solution" object, which no other
+                // captcha type sends. Its counter is the only field both ALTCHA
+                // generations report the same way, so take it here rather than
+                // inferring it from the token, whose shape differs per scheme.
+                if (dict.TryGetValue("solution", out var solution)
+                    && solution is IDictionary<string, object?> solutionDict
+                    && solutionDict.TryGetValue("number", out var number))
+                {
+                    result.Number = ToCounter(number);
+                }
             }
             else
             {
@@ -181,13 +192,26 @@ namespace CapSkip
         /// <c>altcha</c> form field carries, so it is posted back verbatim.
         /// <see cref="SolveResult.Code"/> keeps the raw answer so callers that
         /// forward it (or that were written against another solver's API) keep
-        /// working. If the payload does not decode, the result is returned untouched
-        /// rather than masking the server's reply.
+        /// working.
+        /// <para>
+        /// The counter comes from the server's own solution object when the poll
+        /// carried one, because that is the single field both ALTCHA generations
+        /// report the same way. Only if it is absent — a plain-text poll — is it dug
+        /// out of the token, which is shaped differently per scheme. If neither
+        /// yields one, the result keeps its token and simply has no number, rather
+        /// than masking the server's reply.
+        /// </para>
         /// </remarks>
         internal static SolveResult ApplyAltchaSolution(SolveResult result)
         {
             var code = result.Code ?? string.Empty;
             result.Token = code;
+
+            // Already taken from the server's own solution object during the poll.
+            if (result.Number != null)
+            {
+                return result;
+            }
 
             byte[] decoded;
             try
@@ -213,21 +237,48 @@ namespace CapSkip
                 return result;
             }
 
+            // The two ALTCHA generations nest the counter differently: a legacy
+            // payload is the challenge document with a top-level "number" added,
+            // while a proof-of-work v2 payload is
+            // {"challenge": {...}, "solution": {"counter": N, ...}} with no
+            // "number" at all.
             if (payload.TryGetValue("number", out var number) && number != null)
             {
-                try
-                {
-                    result.Number = Convert.ToInt64(number, CultureInfo.InvariantCulture);
-                }
-                catch (Exception ex) when (ex is FormatException || ex is InvalidCastException
-                    || ex is OverflowException)
-                {
-                    // A non-numeric "number" is the server telling us something we do
-                    // not model; leave it out rather than failing the whole solve.
-                }
+                result.Number = ToCounter(number);
+            }
+            else if (payload.TryGetValue("solution", out var solution)
+                && solution is IDictionary<string, object?> solutionDict
+                && solutionDict.TryGetValue("counter", out var counter))
+            {
+                result.Number = ToCounter(counter);
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Convert a JSON counter to a long, or null if it is not a number.
+        /// </summary>
+        /// <remarks>
+        /// A non-numeric counter is the server telling us something we do not
+        /// model; it is left out rather than failing the whole solve.
+        /// </remarks>
+        private static long? ToCounter(object? value)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+            }
+            catch (Exception ex) when (ex is FormatException || ex is InvalidCastException
+                || ex is OverflowException)
+            {
+                return null;
+            }
         }
 
         private static string? GeetestField(IDictionary<string, object?> payload, string prefixed, string shortName)

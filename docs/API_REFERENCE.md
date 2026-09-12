@@ -360,6 +360,11 @@ result.Code;     // the same string as Token
 
 `challenge_json` accepts a dictionary (serialized for you) or a JSON string.
 
+`Number` is reported for both ALTCHA generations. Their tokens differ — a legacy
+payload carries it as a top-level `number`, while a proof-of-work v2 payload has
+none, its counter sitting at `solution.counter` — so it is read from the server's
+own `solution` object, which reports both the same way.
+
 Post the token back in the form field the widget uses, named `altcha`:
 
 ```csharp

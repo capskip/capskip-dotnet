@@ -83,8 +83,131 @@ namespace CapSkip.Tests
         }
     }
 
+    /// <summary>Mock <see cref="ApiClient"/> whose poll returns exactly the JSON it was given.</summary>
+    public sealed class RawAltchaApiClient : ApiClient
+    {
+        private readonly string payload;
+
+        public RawAltchaApiClient(string payload)
+            : base("mock", 0)
+        {
+            this.payload = payload;
+        }
+
+        public override Task<string> InAsync(
+            IDictionary<string, object?> options,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult("OK|123");
+
+        public override Task<string> ResAsync(
+            IDictionary<string, object?> query,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(payload);
+    }
+
     public class AltchaTests
     {
+        public const int V2Number = 47;
+
+        /// <summary>
+        /// A PoW v2 answer is shaped completely differently: no top-level
+        /// <c>number</c>, and the counter sits at <c>solution.counter</c>. Captured
+        /// from a real PBKDF2/SHA-256 deployment (captcha.seventy9.co.uk), the
+        /// scheme altcha.org documents today.
+        /// </summary>
+        public static readonly string V2Token = Convert.ToBase64String(
+            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["challenge"] = new Dictionary<string, object>
+                {
+                    ["parameters"] = new Dictionary<string, object>
+                    {
+                        ["algorithm"] = "PBKDF2/SHA-256",
+                        ["cost"] = 50000,
+                        ["expiresAt"] = 1789224090,
+                        ["keyLength"] = 32,
+                        ["keyPrefix"] = "00",
+                        ["nonce"] = "634c4f591fd086beb40d67312b85808a",
+                        ["salt"] = "511e1c75edbf295278c9bfb68191053c",
+                    },
+                    ["signature"] = "9197e4a35ebff399d669e747c7c5e6ab079b30fe3437df268dc7caf34cf9e281",
+                },
+                ["solution"] = new Dictionary<string, object>
+                {
+                    ["counter"] = V2Number,
+                    ["derivedKey"] = "0099db7cb36864d8875ff8305c9a3d2649b1f72cb774de1c",
+                },
+            })));
+
+        private static CapSkipClient MakeRaw(string payload)
+        {
+            var solver = new CapSkipClient(apiKey: "API_KEY", pollingInterval: 1);
+            solver.ApiClient = new RawAltchaApiClient(payload);
+            return solver;
+        }
+
+        private static Task<SolveResult> SolveRaw(CapSkipClient solver) => solver.AltchaAsync(
+            Url, new Dictionary<string, object?> { ["challenge_url"] = ChallengeUrl });
+
+        [Fact]
+        public async Task ExposesTheCounterForAProofOfWorkV2Answer()
+        {
+            // A v2 token carries no top-level `number` — the counter is at
+            // `solution.counter`, and the server reports it as `solution.number`
+            // in the poll payload. Reading only the token's own `number` silently
+            // drops it for every PBKDF2 site, the scheme ALTCHA recommends.
+            var solver = MakeRaw(JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["status"] = 1,
+                ["request"] = V2Token,
+                ["solution"] = new Dictionary<string, object>
+                {
+                    ["token"] = V2Token,
+                    ["number"] = V2Number,
+                },
+            }));
+
+            var result = await SolveRaw(solver);
+
+            Assert.Equal(V2Token, result.Token);
+            Assert.Equal(V2Number, result.Number);
+        }
+
+        [Fact]
+        public async Task RecoversAV2CounterFromTheTokenWithoutASolution()
+        {
+            var solver = MakeRaw(JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["status"] = 1,
+                ["request"] = V2Token,
+            }));
+
+            var result = await SolveRaw(solver);
+
+            Assert.Equal(V2Number, result.Number);
+        }
+
+        [Fact]
+        public async Task TrustsTheServerCounterOverAnUnreadableToken()
+        {
+            // If the two ever disagree, the server worked the answer out and the
+            // decode is only an inference from it.
+            var solver = MakeRaw(JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["status"] = 1,
+                ["request"] = "not-base64-json",
+                ["solution"] = new Dictionary<string, object>
+                {
+                    ["token"] = "not-base64-json",
+                    ["number"] = 512,
+                },
+            }));
+
+            var result = await SolveRaw(solver);
+
+            Assert.Equal(512, result.Number);
+        }
+
         private const string Url = "https://mysite.com/signup";
         private const string ChallengeUrl = "https://mysite.com/captcha/api/altcha/challenge";
 
@@ -275,12 +398,15 @@ namespace CapSkip.Tests
         [Fact]
         public async Task UndecodableAnswerIsLeftAlone()
         {
-            var (solver, _) = Make("not-base64-json");
-
-            var result = await solver.AltchaAsync(Url, new Dictionary<string, object?>
+            // No `solution` object either — a server returning something that is
+            // not a token has no counter to report, so nothing to fall back on.
+            var solver = MakeRaw(JsonSerializer.Serialize(new Dictionary<string, object>
             {
-                ["challenge_url"] = ChallengeUrl,
-            });
+                ["status"] = 1,
+                ["request"] = "not-base64-json",
+            }));
+
+            var result = await SolveRaw(solver);
 
             Assert.Equal("not-base64-json", result.Code);
             Assert.Null(result.Number);
