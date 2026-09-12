@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 
 namespace CapSkip
@@ -130,6 +131,17 @@ namespace CapSkip
                 {
                     result.UserAgent = userAgentText;
                 }
+
+                // ALTCHA's createTask-shaped "solution" object, which no other
+                // captcha type sends. Its counter is the only field both ALTCHA
+                // generations report the same way, so take it here rather than
+                // inferring it from the token, whose shape differs per scheme.
+                if (dict.TryGetValue("solution", out var solution)
+                    && solution is IDictionary<string, object?> solutionDict
+                    && solutionDict.TryGetValue("number", out var number))
+                {
+                    result.Number = ToCounter(number);
+                }
             }
             else
             {
@@ -168,6 +180,105 @@ namespace CapSkip
             result.Seccode = GeetestField(payload, "geetest_seccode", "seccode") ?? result.Seccode;
 
             return result;
+        }
+
+        /// <summary>
+        /// Expose the ALTCHA answer as <see cref="SolveResult.Token"/>, and the
+        /// winning counter as <see cref="SolveResult.Number"/>.
+        /// </summary>
+        /// <remarks>
+        /// ALTCHA answers come back as a base64 payload: the challenge document with
+        /// the winning counter added. That payload is what the site's own
+        /// <c>altcha</c> form field carries, so it is posted back verbatim.
+        /// <see cref="SolveResult.Code"/> keeps the raw answer so callers that
+        /// forward it (or that were written against another solver's API) keep
+        /// working.
+        /// <para>
+        /// The counter comes from the server's own solution object when the poll
+        /// carried one, because that is the single field both ALTCHA generations
+        /// report the same way. Only if it is absent — a plain-text poll — is it dug
+        /// out of the token, which is shaped differently per scheme. If neither
+        /// yields one, the result keeps its token and simply has no number, rather
+        /// than masking the server's reply.
+        /// </para>
+        /// </remarks>
+        internal static SolveResult ApplyAltchaSolution(SolveResult result)
+        {
+            var code = result.Code ?? string.Empty;
+            result.Token = code;
+
+            // Already taken from the server's own solution object during the poll.
+            if (result.Number != null)
+            {
+                return result;
+            }
+
+            byte[] decoded;
+            try
+            {
+                decoded = Convert.FromBase64String(code);
+            }
+            catch (FormatException)
+            {
+                return result;
+            }
+
+            Dictionary<string, object?> payload;
+            try
+            {
+                payload = ParseJsonObject(Encoding.UTF8.GetString(decoded));
+            }
+            catch (JsonException)
+            {
+                return result;
+            }
+            catch (DecoderFallbackException)
+            {
+                return result;
+            }
+
+            // The two ALTCHA generations nest the counter differently: a legacy
+            // payload is the challenge document with a top-level "number" added,
+            // while a proof-of-work v2 payload is
+            // {"challenge": {...}, "solution": {"counter": N, ...}} with no
+            // "number" at all.
+            if (payload.TryGetValue("number", out var number) && number != null)
+            {
+                result.Number = ToCounter(number);
+            }
+            else if (payload.TryGetValue("solution", out var solution)
+                && solution is IDictionary<string, object?> solutionDict
+                && solutionDict.TryGetValue("counter", out var counter))
+            {
+                result.Number = ToCounter(counter);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Convert a JSON counter to a long, or null if it is not a number.
+        /// </summary>
+        /// <remarks>
+        /// A non-numeric counter is the server telling us something we do not
+        /// model; it is left out rather than failing the whole solve.
+        /// </remarks>
+        private static long? ToCounter(object? value)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+            }
+            catch (Exception ex) when (ex is FormatException || ex is InvalidCastException
+                || ex is OverflowException)
+            {
+                return null;
+            }
         }
 
         private static string? GeetestField(IDictionary<string, object?> payload, string prefixed, string shortName)

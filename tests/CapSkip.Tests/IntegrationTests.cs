@@ -242,6 +242,44 @@ namespace CapSkip.Tests
         }
 
         [Fact]
+        public async Task AltchaWithChallengeUrl()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.AltchaAsync(Url, new Dictionary<string, object?>
+            {
+                ["challenge_url"] = "https://example.com/captcha/api/altcha/challenge",
+            });
+
+            Assert.Equal(MockServer.AltchaToken, result.Code);
+            Assert.Equal(MockServer.AltchaToken, result.Token);
+            Assert.Equal(MockServer.AltchaNumber, result.Number);
+            Assert.NotEmpty(result.CaptchaId);
+        }
+
+        [Fact]
+        public async Task AltchaWithInlineChallengeDictionary()
+        {
+            // A dictionary has to reach the server as JSON, not as its type name, or
+            // the server answers ERROR_BAD_PARAMETERS.
+            var solver = MakeSolver();
+
+            var result = await solver.AltchaAsync(Url, new Dictionary<string, object?>
+            {
+                ["challenge_json"] = new Dictionary<string, object>
+                {
+                    ["algorithm"] = "SHA-256",
+                    ["challenge"] = "3dd28253be6cc0c54d95f7f98c517e68",
+                    ["salt"] = "46d5b1c8871e5152d902ee3f?expires=1893456000",
+                    ["signature"] = "4b1cf0e0be0f4e5247e50b0f9a449830",
+                    ["maxnumber"] = 1000000,
+                },
+            });
+
+            Assert.Equal(MockServer.AltchaNumber, result.Number);
+        }
+
+        [Fact]
         public async Task ConcurrentSolves()
         {
             var solver = MakeSolver();

@@ -19,6 +19,12 @@ namespace CapSkip.Tests
         public const string Code = "SOLVED_TOKEN_abc123";
         public const string UserAgent = "CapSkipUA/1.0";
 
+        // ALTCHA answers are base64 of the challenge document with the winning
+        // counter added, so the mock has to return a real one for the token/number
+        // parsing to mean anything.
+        public const long AltchaNumber = 9661;
+        public const string AltchaToken = "eyJhbGdvcml0aG0iOiJTSEEtMjU2IiwiY2hhbGxlbmdlIjoiM2RkMjgyNTNiZTZjYzBjNTRkOTVmN2Y5OGM1MTdlNjgiLCJudW1iZXIiOjk2NjEsInNhbHQiOiI0NmQ1YjFjODg3MWU1MTUyZDkwMmVlM2Y/ZXhwaXJlcz0xODkzNDU2MDAwIiwic2lnbmF0dXJlIjoiNGIxY2YwZTBiZTBmNGU1MjQ3ZTUwYjBmOWE0NDk4MzAifQ==";
+
         // A minimal valid 1x1 PNG. The SDK never inspects the content, so the exact
         // pixels do not matter.
         public static readonly byte[] Png = Convert.FromBase64String(
@@ -139,6 +145,23 @@ namespace CapSkip.Tests
                     stream,
                     wantJson ? "{\"status\":0,\"request\":\"CAPCHA_NOT_READY\"}" : "CAPCHA_NOT_READY",
                     wantJson ? "application/json" : "text/plain");
+            }
+            else if (_idType.TryGetValue(cid, out var altchaType) && altchaType == "altcha")
+            {
+                // CapSkip emits a superset: the legacy status/request pair plus the
+                // createTask-shaped solution object.
+                if (wantJson)
+                {
+                    Send(
+                        stream,
+                        $"{{\"status\":1,\"request\":\"{AltchaToken}\",\"solution\":"
+                        + $"{{\"token\":\"{AltchaToken}\",\"number\":{AltchaNumber}}}}}",
+                        "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{AltchaToken}");
+                }
             }
             else if (wantJson && _idType.TryGetValue(cid, out var type) && type == "turnstile")
             {

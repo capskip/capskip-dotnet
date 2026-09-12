@@ -22,8 +22,10 @@ The SDK only supports the four captcha types documented by CapSkip.
 | reCAPTCHA v3 | `RecaptchaAsync(..., version="v3")` | `userrecaptcha` + `version=v3` |
 | Cloudflare Turnstile | `TurnstileAsync()` | `turnstile` |
 | GeeTest v3 (slide) | `GeetestAsync()` | `geetest` |
+| ALTCHA (proof-of-work) | `AltchaAsync()` | `altcha` |
 
-**Proxy** is supported for reCAPTCHA, Turnstile, and GeeTest — not for image captcha.
+**Proxy** is supported for reCAPTCHA, Turnstile, GeeTest, and ALTCHA — not for image
+captcha. For ALTCHA the proxy is used only for the `challenge_url` fetch.
 
 ---
 
@@ -274,6 +276,122 @@ await solver.GeetestAsync(gt, challenge, url, new Dictionary<string, object?> { 
 
 GeeTest is a real browser solve, so it uses the longer `recaptchaTimeout` budget
 rather than `defaultTimeout`.
+
+---
+
+## 6. ALTCHA — `AltchaAsync(url, options)`
+
+ALTCHA is not a recognition captcha. There is no image, audio or text to read:
+the site issues a proof-of-work challenge and the client must brute-force a
+number that satisfies it. A solve is therefore deterministic and cheap —
+typically milliseconds.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `altcha` |
+| `pageurl` | string | Yes | Full URL of the page the challenge came from |
+| `challenge_url` | string | One of the two | Endpoint CapSkip fetches the challenge from |
+| `challenge_json` | string | One of the two | The challenge document itself, as a JSON string |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address — used **only** for the `challenge_url` fetch |
+| `proxytype` | string | No | Proxy type |
+
+Sending both challenge parameters is allowed: the inline `challenge_json` wins,
+because fetching would only re-obtain what you already supplied.
+
+### Getting the challenge
+
+Open DevTools → Network on the target page and look for the request the
+`<altcha-widget>` makes for its challenge (often something like
+`/altcha/challenge`). The request URL is your `challenge_url`; its JSON response
+is your `challenge_json`.
+
+The widget attribute that names that endpoint depends on the widget version, so
+read the page source rather than assuming:
+
+| Widget | Attribute |
+|---|---|
+| v1 / v2 | `challengeurl="…"`, with a separate `challengejson="…"` for an inline challenge |
+| v3+ | `challenge="…"` — the same attribute takes either a URL or the challenge data |
+
+> **Challenges expire, and the window is short** — some sites inside two minutes.
+> Once expired, the site refuses the solution with a bare "verification failed"
+> that looks exactly like a wrong answer. Fetch the challenge immediately before
+> solving and submit the token promptly; do not fetch a batch in advance, and do
+> not hold a token while a user fills in a form.
+>
+> CapSkip refuses an already-expired inline challenge immediately rather than
+> burning CPU on a token that cannot work. If you passed `challenge_url` and the
+> challenge expired while the job queued, it fetches a fresh one automatically.
+
+### SDK usage
+
+```csharp
+// CapSkip fetches the challenge for you
+var result = await solver.AltchaAsync(
+    "https://example.com/signup",
+    new Dictionary<string, object?>
+    {
+        ["challenge_url"] = "https://example.com/captcha/api/altcha/challenge",
+    });
+
+// …or hand it the document you already have. No network request at all.
+var inline = await solver.AltchaAsync(
+    "https://example.com/signup",
+    new Dictionary<string, object?>
+    {
+        ["challenge_json"] = new Dictionary<string, object>
+        {
+            ["algorithm"] = "SHA-256",
+            ["challenge"] = "…",
+            ["salt"] = "…",
+            ["signature"] = "…",
+            ["maxnumber"] = 1000000,
+        },
+    });
+
+result.Token;    // the base64 payload to post back
+result.Number;   // the counter that solved it
+result.Code;     // the same string as Token
+```
+
+`challenge_json` accepts a dictionary (serialized for you) or a JSON string.
+
+`Number` is reported for both ALTCHA generations. Their tokens differ — a legacy
+payload carries it as a top-level `number`, while a proof-of-work v2 payload has
+none, its counter sitting at `solution.counter` — so it is read from the server's
+own `solution` object, which reports both the same way.
+
+Post the token back in the form field the widget uses, named `altcha`:
+
+```csharp
+var body = new FormUrlEncodedContent(new Dictionary<string, string>
+{
+    ["email"] = "someone@example.com",
+    ["altcha"] = result.Token!,
+});
+```
+
+Do not re-encode, trim or re-order the token: it is base64 of a JSON document
+whose fields are covered by the server's HMAC signature, so any modification
+invalidates it. Some integrations read the payload from a JSON body field
+instead — check what the page's own submit sends and mirror it.
+
+Unlike GeeTest and reCAPTCHA this is CPU proof-of-work rather than a browser
+solve, so it uses `defaultTimeout`, not `recaptchaTimeout`.
+
+### Algorithms
+
+CapSkip supports the legacy scheme (SHA-1/256/384/512) and PoW v2 with PBKDF2 or
+SHA. **Argon2id and scrypt are refused**, not attempted: a task using one returns
+`ERROR_CAPTCHA_UNSOLVABLE` and is never retried. ALTCHA itself recommends PBKDF2
+as the default, so this affects a minority of sites.
+
+All three widget types (`native`, `checkbox`, `switch`) work — the distinction is
+purely visual and never reaches CapSkip.
 
 ---
 
