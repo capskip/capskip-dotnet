@@ -288,5 +288,135 @@ namespace CapSkip.Tests
                 solver.TurnstileAsync(TurnstileSiteKey, Url));
             Assert.All(results, r => Assert.Equal(MockServer.Code, r.Code));
         }
+
+        // -- Capy ------------------------------------------------------------
+
+        [Fact]
+        public async Task Capy()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.CapyAsync(MockServer.CapyCaptchaKey, Url);
+
+            Assert.Equal(MockServer.CapyCaptchaKey, result.CaptchaKey);
+            Assert.Equal(MockServer.CapyChallengeKey, result.ChallengeKey);
+            Assert.Equal(MockServer.CapyAnswer, result.Answer);
+            Assert.False(string.IsNullOrEmpty(result.CaptchaId));
+        }
+
+        /// <summary>
+        /// The answer is the drag path the widget would have recorded; the target
+        /// site verifies it against the challenge it issued, so any edit breaks it.
+        /// </summary>
+        [Fact]
+        public async Task CapyAnswerCrossesTheWireUnchanged()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.CapyAsync(
+                MockServer.CapyCaptchaKey,
+                Url,
+                new Dictionary<string, object?> { ["api_server"] = "https://jp.api.capy.me/" });
+
+            Assert.Equal(MockServer.CapyAnswer, result.Answer);
+        }
+
+        [Fact]
+        public async Task CapyAvatarIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(() => solver.CapyAsync(
+                MockServer.CapyCaptchaKey,
+                Url,
+                new Dictionary<string, object?> { ["version"] = "avatar" }));
+        }
+
+        // -- CaptchaFox -------------------------------------------------------
+
+        [Fact]
+        public async Task CaptchaFox()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.CaptchaFoxAsync("sk_xtNxpk6fCdFbxh1_xJeGflSdCE9tn99G", Url);
+
+            Assert.Equal(MockServer.CaptchaFoxToken, result.Code);
+            Assert.Equal(MockServer.CaptchaFoxToken, result.Token);
+            Assert.False(string.IsNullOrEmpty(result.CaptchaId));
+        }
+
+        /// <summary>
+        /// Not the one sent: CapSkip solves in its own browser, and the token has to
+        /// be submitted under the UA that minted it.
+        /// </summary>
+        [Fact]
+        public async Task CaptchaFoxReportsTheBrowserUserAgent()
+        {
+            const string callerUa = "Mozilla/5.0 (the caller own UA)";
+            var solver = MakeSolver();
+
+            var result = await solver.CaptchaFoxAsync(
+                "sk_x", Url, new Dictionary<string, object?> { ["useragent"] = callerUa });
+
+            Assert.Equal(MockServer.CaptchaFoxUserAgent, result.UserAgent);
+            Assert.NotEqual(callerUa, result.UserAgent);
+        }
+
+        [Fact]
+        public async Task CaptchaFoxWithoutASitekeyIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(() => solver.CaptchaFoxAsync("", Url));
+        }
+
+        // -- Friendly Captcha --------------------------------------------------
+
+        [Fact]
+        public async Task FriendlyCaptcha()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.FriendlyCaptchaAsync(
+                "FCMGEMUD2M567T8G", Url, new Dictionary<string, object?> { ["version"] = "v1" });
+
+            Assert.Equal(MockServer.FriendlyCaptchaToken, result.Code);
+            Assert.Equal(MockServer.FriendlyCaptchaToken, result.Token);
+            Assert.False(string.IsNullOrEmpty(result.CaptchaId));
+        }
+
+        /// <summary>
+        /// The token carries base64 padding and slashes; form encoding must
+        /// round-trip them, or the target site rejects a token that looks fine.
+        /// </summary>
+        [Fact]
+        public async Task FriendlyCaptchaTokenSurvivesTheWireVerbatim()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.FriendlyCaptchaAsync(
+                "FCMGEMUD2M567T8G",
+                Url,
+                new Dictionary<string, object?>
+                {
+                    ["module_script"] = "https://cdn.example.com/site.min.js",
+                });
+
+            Assert.Equal(MockServer.FriendlyCaptchaToken, result.Token);
+            Assert.Contains("/", result.Token!, StringComparison.Ordinal);
+            Assert.Contains("=", result.Token!, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task FriendlyCaptchaBadVersionIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(() => solver.FriendlyCaptchaAsync(
+                "FCMGEMUD2M567T8G",
+                Url,
+                new Dictionary<string, object?> { ["version"] = "v3" }));
+        }
     }
 }

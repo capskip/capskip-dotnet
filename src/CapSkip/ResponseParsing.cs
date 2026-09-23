@@ -110,8 +110,12 @@ namespace CapSkip
         {
             if (polled is IDictionary<string, object?> dict)
             {
+                // Capy is the one method whose answer is an object rather than a
+                // string, and json=1 puts that object straight into `request`. It is
+                // re-serialized rather than ToString()'d, so Code carries the same
+                // JSON a plain-text poll would have delivered after OK|.
                 result.Code = dict.TryGetValue("request", out var req)
-                    ? Convert.ToString(req, CultureInfo.InvariantCulture) ?? string.Empty
+                    ? StringifyRequest(req)
                     : string.Empty;
 
                 object? userAgent = null;
@@ -137,10 +141,22 @@ namespace CapSkip
                 // generations report the same way, so take it here rather than
                 // inferring it from the token, whose shape differs per scheme.
                 if (dict.TryGetValue("solution", out var solution)
-                    && solution is IDictionary<string, object?> solutionDict
-                    && solutionDict.TryGetValue("number", out var number))
+                    && solution is IDictionary<string, object?> solutionDict)
                 {
-                    result.Number = ToCounter(number);
+                    if (solutionDict.TryGetValue("number", out var number))
+                    {
+                        result.Number = ToCounter(number);
+                    }
+
+                    // A client must never be left without the token the poll
+                    // actually carried, so the createTask-shaped object is read as a
+                    // fallback when `request` came through empty.
+                    if (result.Code.Length == 0
+                        && solutionDict.TryGetValue("token", out var solutionToken))
+                    {
+                        result.Code = Convert.ToString(solutionToken, CultureInfo.InvariantCulture)
+                            ?? string.Empty;
+                    }
                 }
             }
             else
@@ -148,6 +164,84 @@ namespace CapSkip
                 result.Code = Convert.ToString(polled, CultureInfo.InvariantCulture) ?? string.Empty;
             }
 
+            return result;
+        }
+
+        /// <summary>
+        /// Render a polled <c>request</c> value as the string <see cref="SolveResult.Code"/>
+        /// holds: JSON for an object answer, the value itself for a plain token.
+        /// </summary>
+        private static string StringifyRequest(object? request)
+        {
+            if (request is null)
+            {
+                return string.Empty;
+            }
+
+            if (request is string text)
+            {
+                return text;
+            }
+
+            // An object or array answer — Capy's three-value solution. Serializing it
+            // keeps Code a string without losing anything the caller may want to
+            // forward verbatim.
+            if (request is IDictionary<string, object?> || request is IList<object?>)
+            {
+                return JsonSerializer.Serialize(request);
+            }
+
+            return Convert.ToString(request, CultureInfo.InvariantCulture) ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Expand a Capy answer — an object rather than a token — into
+        /// <see cref="SolveResult.CaptchaKey"/>, <see cref="SolveResult.ChallengeKey"/>,
+        /// <see cref="SolveResult.Answer"/> and <see cref="SolveResult.RespKey"/>.
+        /// </summary>
+        /// <remarks>
+        /// These three values go into the target form's <c>capy_captchakey</c>,
+        /// <c>capy_challengekey</c> and <c>capy_answer</c> fields.
+        /// <see cref="SolveResult.Code"/> keeps the raw JSON answer so callers that
+        /// forward it verbatim (or that were written against another solver's API)
+        /// keep working. If it does not parse, the result is returned untouched
+        /// rather than masking the server's reply.
+        /// </remarks>
+        internal static SolveResult ApplyCapySolution(SolveResult result)
+        {
+            Dictionary<string, object?> payload;
+            try
+            {
+                payload = ParseJsonObject(result.Code ?? string.Empty);
+            }
+            catch (JsonException)
+            {
+                return result;
+            }
+
+            result.CaptchaKey = CapyField(payload, "captchakey") ?? result.CaptchaKey;
+            result.ChallengeKey = CapyField(payload, "challengekey") ?? result.ChallengeKey;
+            result.Answer = CapyField(payload, "answer") ?? result.Answer;
+            result.RespKey = CapyField(payload, "respKey") ?? result.RespKey;
+
+            return result;
+        }
+
+        private static string? CapyField(IDictionary<string, object?> payload, string key)
+        {
+            return payload.TryGetValue(key, out var value) && value != null
+                ? Convert.ToString(value, CultureInfo.InvariantCulture)
+                : null;
+        }
+
+        /// <summary>
+        /// Expose a single-token answer as <see cref="SolveResult.Token"/>, named for
+        /// the form field it fills. <see cref="SolveResult.Code"/> keeps the same
+        /// string, so callers that forward it verbatim keep working.
+        /// </summary>
+        internal static SolveResult ApplyTokenSolution(SolveResult result)
+        {
+            result.Token = result.Code ?? string.Empty;
             return result;
         }
 

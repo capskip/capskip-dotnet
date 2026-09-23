@@ -22,6 +22,16 @@ switch (command)
     case "altcha":
         await AltchaExample.RunAsync();
         break;
+    case "capy":
+        await CapyExample.RunAsync();
+        break;
+    case "captchafox":
+        await CaptchaFoxExample.RunAsync();
+        break;
+    case "friendly":
+    case "friendlycaptcha":
+        await FriendlyCaptchaExample.RunAsync();
+        break;
     case "async":
         await AsyncExample.RunAsync();
         break;
@@ -36,6 +46,9 @@ switch (command)
         Console.WriteLine("  turnstile  Solve a Cloudflare Turnstile (public test key)");
         Console.WriteLine("  geetest    Solve a GeeTest v3 slider (fetches a fresh gt/challenge)");
         Console.WriteLine("  altcha     Solve an ALTCHA proof-of-work challenge");
+        Console.WriteLine("  capy       Solve a Capy Puzzle (returns three form values, not a token)");
+        Console.WriteLine("  captchafox Solve a CaptchaFox widget");
+        Console.WriteLine("  friendly   Solve a Friendly Captcha (say which version: v1 or v2)");
         Console.WriteLine("  async      Solve several captchas concurrently");
         Console.WriteLine("  verify     Check CapSkip is running (accepts --host --port --api-key)");
         Console.WriteLine();

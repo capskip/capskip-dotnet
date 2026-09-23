@@ -32,6 +32,45 @@ namespace CapSkip.Tests
 
         private readonly TcpListener _listener;
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        /// <summary>
+        /// Capy answers are not a token: three values that together go into the
+        /// target form. <c>answer</c> is the drag path the widget would have
+        /// recorded, so the mock carries a realistic one — the expansion is only
+        /// meaningful against a real shape.
+        /// </summary>
+        public const string CapyCaptchaKey = "PUZZLE_Abc1dEFghIJKLM2no34P56q7rStu8v";
+
+        public const string CapyChallengeKey = "BalY2gJaI8uA2SGVOZhqBQ3V0CYSNNGP";
+
+        public const string CapyAnswer = "0xax8ex0xax84x0xkx7qx0x18x76x0x1ix6sx0x26x68x0x2gx5kx0x34x50x";
+
+        /// <summary>The Capy solution object, exactly as CapSkip serializes it.</summary>
+        public const string CapySolutionJson =
+            "{\"captchakey\":\"" + CapyCaptchaKey + "\","
+            + "\"challengekey\":\"" + CapyChallengeKey + "\","
+            + "\"answer\":\"" + CapyAnswer + "\","
+            + "\"respKey\":\"\"}";
+
+        public const string CaptchaFoxToken =
+            "177f50c25b845601e5c779cdb51b040d523e8ab69efb4d5b343e28df07d05076";
+
+        /// <summary>
+        /// The UA the browser actually minted the token under — deliberately not one
+        /// a caller could have sent, so a test can tell the two apart.
+        /// </summary>
+        public const string CaptchaFoxUserAgent =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            + "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
+
+        /// <summary>
+        /// A v1 token: four dot-separated parts. A v2 one is a single opaque string
+        /// of roughly six kilobytes, which shape-wise changes nothing the SDK does.
+        /// </summary>
+        public const string FriendlyCaptchaToken =
+            "c62c4da36bbaf7f253873035832709ef."
+            + "aqwpWwdbzRWKY/UQAQwwpgAAAAAAAAAAM7hBvJOzqjc=."
+            + "AAAAAArcCQABAAAAxv8QAAIAAACKYRgA.AgAB";
+
         private readonly ConcurrentDictionary<string, string> _idType = new ConcurrentDictionary<string, string>();
         private readonly ConcurrentDictionary<string, int> _pollCount = new ConcurrentDictionary<string, int>();
         private int _ids;
@@ -161,6 +200,57 @@ namespace CapSkip.Tests
                 else
                 {
                     Send(stream, $"OK|{AltchaToken}");
+                }
+            }
+            else if (_idType.TryGetValue(cid, out var capyType) && capyType == "capy")
+            {
+                // The one method whose answer is an object rather than a string:
+                // json=1 puts it straight into `request`, and plain text sends it as
+                // a single line of JSON after OK|.
+                if (wantJson)
+                {
+                    Send(
+                        stream,
+                        $"{{\"status\":1,\"request\":{CapySolutionJson},"
+                        + $"\"solution\":{CapySolutionJson}}}",
+                        "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{CapySolutionJson}");
+                }
+            }
+            else if (_idType.TryGetValue(cid, out var foxType) && foxType == "captchafox")
+            {
+                // The UA is the browser's own, and CapSkip reports it at the top
+                // level and inside solution both.
+                if (wantJson)
+                {
+                    Send(
+                        stream,
+                        $"{{\"status\":1,\"request\":\"{CaptchaFoxToken}\","
+                        + $"\"userAgent\":\"{CaptchaFoxUserAgent}\",\"solution\":"
+                        + $"{{\"token\":\"{CaptchaFoxToken}\",\"userAgent\":\"{CaptchaFoxUserAgent}\"}}}}",
+                        "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{CaptchaFoxToken}");
+                }
+            }
+            else if (_idType.TryGetValue(cid, out var friendlyType) && friendlyType == "friendly_captcha")
+            {
+                if (wantJson)
+                {
+                    Send(
+                        stream,
+                        $"{{\"status\":1,\"request\":\"{FriendlyCaptchaToken}\",\"solution\":"
+                        + $"{{\"token\":\"{FriendlyCaptchaToken}\"}}}}",
+                        "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{FriendlyCaptchaToken}");
                 }
             }
             else if (wantJson && _idType.TryGetValue(cid, out var type) && type == "turnstile")

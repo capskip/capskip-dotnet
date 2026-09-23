@@ -250,6 +250,179 @@ namespace CapSkip
             return ResponseParsing.ApplyAltchaSolution(result);
         }
 
+        /// <summary>Solve a Capy Puzzle captcha.</summary>
+        /// <param name="sitekey">
+        /// The site's public Capy key, conventionally prefixed <c>PUZZLE_</c>. It is
+        /// sent as the <c>captchakey</c> the API documents.
+        /// </param>
+        /// <param name="url">Full URL of the page the captcha appears on.</param>
+        /// <param name="options">
+        /// Optional <c>api_server</c> (the root of the Capy API the key lives behind,
+        /// default <c>https://jp.api.capy.me</c>), <c>version</c>, <c>useragent</c>
+        /// and <c>proxy</c>.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result carrying <see cref="SolveResult.CaptchaKey"/>,
+        /// <see cref="SolveResult.ChallengeKey"/> and <see cref="SolveResult.Answer"/>
+        /// — the three values the target form's <c>capy_captchakey</c>,
+        /// <c>capy_challengekey</c> and <c>capy_answer</c> fields take — plus the raw
+        /// answer as <see cref="SolveResult.Code"/>. This is not a token: all three
+        /// values have to be submitted.
+        /// </returns>
+        /// <remarks>
+        /// Submit <see cref="SolveResult.Answer"/> verbatim — it is the drag path the
+        /// widget would have recorded, so trimming or re-encoding it invalidates the
+        /// solve. The challenge key is single-use and short-lived, so submit promptly
+        /// rather than caching the three values for a later request.
+        /// </remarks>
+        public async Task<SolveResult> CapyAsync(
+            string sitekey,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // A Capy solve is one HTTP fetch plus pixel math, not a browser session,
+            // so it keeps the default timeout. It is held back to roughly two seconds
+            // before the answer is released — Capy refuses answers that arrive faster
+            // than a human could have produced them — which the default absorbs.
+            var pars = new Dictionary<string, object?>
+            {
+                ["captchakey"] = sitekey,
+                ["url"] = url,
+            };
+
+            // An unset optional is dropped rather than sent as null.
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "capy";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyCapySolution(result);
+        }
+
+        /// <summary>Solve a CaptchaFox challenge.</summary>
+        /// <param name="sitekey">
+        /// The public key the widget renders with, conventionally prefixed <c>sk_</c>.
+        /// </param>
+        /// <param name="url">
+        /// Full URL of the page the widget appears on. It has to be the page the
+        /// widget actually runs on: CaptchaFox checks it against the domains the key
+        /// is registered for and refuses a mismatch permanently, not intermittently.
+        /// </param>
+        /// <param name="options">
+        /// Optional <c>api_server</c> (the widget entry point — send it only when the
+        /// page does not load the default, since the MAM package expects a
+        /// <c>MAM_</c> prefixed token), <c>useragent</c> and <c>proxy</c>.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result whose <see cref="SolveResult.Token"/> is the value the form's
+        /// <c>cf-captcha-response</c> field takes, with the same string in
+        /// <see cref="SolveResult.Code"/>, plus <see cref="SolveResult.UserAgent"/>
+        /// when the solve reported one.
+        /// </returns>
+        /// <remarks>
+        /// The reported User-Agent is the browser's own, not any you sent, so submit
+        /// the token under it. Tokens are short lived — submit promptly rather than
+        /// holding one while a user fills in a form.
+        /// </remarks>
+        public async Task<SolveResult> CaptchaFoxAsync(
+            string sitekey,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // A real browser session, like reCAPTCHA and GeeTest, and longer again
+            // when an interactive challenge is drawn — so it gets the longer of the
+            // two timeouts unless the caller asked for a specific one.
+            var pars = new Dictionary<string, object?>
+            {
+                ["timeout"] = RecaptchaTimeout,
+                ["sitekey"] = sitekey,
+                ["url"] = url,
+            };
+
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "captchafox";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyTokenSolution(result);
+        }
+
+        /// <summary>Solve a Friendly Captcha proof-of-work challenge.</summary>
+        /// <param name="sitekey">
+        /// The <c>data-sitekey</c> of the element carrying <c>class="frc-captcha"</c>.
+        /// </param>
+        /// <param name="url">Full URL of the page the widget appears on.</param>
+        /// <param name="options">
+        /// <c>version</c> (<c>v1</c> or <c>v2</c>; a bare <c>1</c> or <c>2</c> works
+        /// too), or <c>module_script</c> / <c>nomodule_script</c> with the widget
+        /// script URLs so CapSkip can read the version off the build the site loads.
+        /// Optional <c>api_server</c> selects the data-residency tenant
+        /// (<c>global</c>, <c>eu</c>, or a full URL).
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result whose <see cref="SolveResult.Token"/> goes into
+        /// <c>frc-captcha-solution</c> on v1 or <c>frc-captcha-response</c> on v2,
+        /// with the same string in <see cref="SolveResult.Code"/>.
+        /// </returns>
+        /// <remarks>
+        /// Two entirely different protocols ship under this one name and a sitekey
+        /// does not tell you which a site uses, so say which — solving the wrong
+        /// version returns a well-formed token the target site rejects, with nothing
+        /// to indicate the version was the problem. With neither a version nor a
+        /// script URL, v1 is assumed. A v2 token is roughly six kilobytes, so size
+        /// whatever carries it accordingly.
+        /// </remarks>
+        public async Task<SolveResult> FriendlyCaptchaAsync(
+            string sitekey,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // Proof-of-work, but not the millisecond kind ALTCHA does: the service
+            // sets the difficulty per request and raises it for addresses it has seen
+            // a lot of, and v2 always solves in a browser. Both make solve time
+            // variable enough to want the longer timeout.
+            var pars = new Dictionary<string, object?>
+            {
+                ["timeout"] = RecaptchaTimeout,
+                ["sitekey"] = sitekey,
+                ["url"] = url,
+            };
+
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "friendly_captcha";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyTokenSolution(result);
+        }
+
         /// <summary>Submit then poll to completion. Used by the higher-level solve methods.</summary>
         public async Task<SolveResult> SolveAsync(
             IDictionary<string, object?> options,
@@ -415,6 +588,21 @@ namespace CapSkip
             if (method == "altcha")
             {
                 return ApiParams.PrepareSubmitParams(parameters, "altcha");
+            }
+
+            if (method == "capy")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "capy");
+            }
+
+            if (method == "captchafox")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "captchafox");
+            }
+
+            if (method == "friendly_captcha")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "friendly_captcha");
             }
 
             return ApiParams.ApplyProxy(ApiParams.ApplyParamAliases(parameters));

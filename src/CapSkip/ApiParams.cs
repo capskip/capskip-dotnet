@@ -49,6 +49,35 @@ namespace CapSkip
             "proxy", "proxytype",
         };
 
+        internal static readonly HashSet<string> CapySubmit = new HashSet<string>
+        {
+            "method", "captchakey", "pageurl", "api_server", "version", "useragent", "json",
+            "proxy", "proxytype",
+        };
+
+        internal static readonly HashSet<string> CaptchaFoxSubmit = new HashSet<string>
+        {
+            "method", "sitekey", "pageurl", "api_server", "useragent", "json",
+            "proxy", "proxytype",
+        };
+
+        internal static readonly HashSet<string> FriendlyCaptchaSubmit = new HashSet<string>
+        {
+            "method", "sitekey", "pageurl", "version", "module_script", "nomodule_script",
+            "api_server", "useragent", "json", "proxy", "proxytype",
+        };
+
+        /// <summary>
+        /// CapSkip solves the puzzle family only. <c>avatar</c> is a different
+        /// challenge behind a different endpoint; the server refuses it at submit
+        /// time rather than answering it with a puzzle answer, which would bill
+        /// for a solve the target site rejects.
+        /// </summary>
+        internal static readonly string[] CapyVersions = { "PUZZLE" };
+
+        /// <summary>Both spellings the server accepts, and the bare digits it also takes.</summary>
+        internal static readonly string[] FriendlyCaptchaVersions = { "V1", "V2", "1", "2" };
+
         /// <summary>
         /// The only values CapSkip maps to a proxy scheme; it answers
         /// ERROR_BAD_PARAMETERS for anything else, SOCKS4 included. Matched
@@ -70,6 +99,17 @@ namespace CapSkip
                 new KeyValuePair<string, string>("challengeURL", "challenge_url"),
                 new KeyValuePair<string, string>("challengeJson", "challenge_json"),
                 new KeyValuePair<string, string>("challengeJSON", "challenge_json"),
+
+                // The server reads userAgent and useragent interchangeably on every
+                // method that takes one, so the SDK settles on the lowercase spelling
+                // its parameter tables document and accepts the camelCase one callers
+                // arrive with.
+                new KeyValuePair<string, string>("userAgent", "useragent"),
+                new KeyValuePair<string, string>("user_agent", "useragent"),
+                new KeyValuePair<string, string>("captchaKey", "captchakey"),
+                new KeyValuePair<string, string>("moduleScript", "module_script"),
+                new KeyValuePair<string, string>("nomoduleScript", "nomodule_script"),
+                new KeyValuePair<string, string>("noModuleScript", "nomodule_script"),
             };
 
         /// <summary>Map friendly parameter names (e.g. <c>url</c>) to their API names (<c>pageurl</c>).</summary>
@@ -163,6 +203,18 @@ namespace CapSkip
                 case "altcha":
                     prepared = NormalizeAltchaSubmit(prepared);
                     ValidateAltchaSubmit(prepared);
+                    break;
+                case "capy":
+                    prepared = DropUnset(prepared);
+                    ValidateCapySubmit(prepared);
+                    break;
+                case "captchafox":
+                    prepared = DropUnset(prepared);
+                    ValidateCaptchaFoxSubmit(prepared);
+                    break;
+                case "friendly_captcha":
+                    prepared = DropUnset(prepared);
+                    ValidateFriendlyCaptchaSubmit(prepared);
                     break;
             }
 
@@ -340,6 +392,113 @@ namespace CapSkip
             {
                 throw new ValidationException(
                     $"Unsupported parameters for ALTCHA: {ReprList(unknown)}.");
+            }
+        }
+
+        /// <summary>
+        /// Drop parameters left null so an omitted optional is not sent at all.
+        /// </summary>
+        /// <remarks>
+        /// The form body can only carry strings, so a null default would otherwise
+        /// reach the server ToString()'d. Mirrors the server, which reads a
+        /// JSON-body <c>null</c> as "not sent".
+        /// </remarks>
+        private static Dictionary<string, object?> DropUnset(IDictionary<string, object?> parameters)
+        {
+            var outParams = new Dictionary<string, object?>();
+            foreach (var pair in parameters)
+            {
+                if (pair.Value != null)
+                {
+                    outParams[pair.Key] = pair.Value;
+                }
+            }
+
+            return outParams;
+        }
+
+        private static void ValidateCapySubmit(IDictionary<string, object?> parameters)
+        {
+            // Both are documented as required; without captchakey the server answers
+            // ERROR_BAD_PARAMETERS and without pageurl ERROR_PAGEURL. Fail locally so
+            // a missing value does not cost a round-trip.
+            foreach (var key in new[] { "captchakey", "pageurl" })
+            {
+                if (!parameters.TryGetValue(key, out var value) || !IsTruthy(value))
+                {
+                    throw new ValidationException($"'{key}' is required for Capy.");
+                }
+            }
+
+            if (parameters.TryGetValue("version", out var version) && version != null)
+            {
+                var text = Convert.ToString(version, CultureInfo.InvariantCulture);
+                if (!string.IsNullOrEmpty(text)
+                    && Array.IndexOf(CapyVersions, text!.ToUpperInvariant()) < 0)
+                {
+                    throw new ValidationException(
+                        $"Unsupported Capy version '{text}'. CapSkip solves the puzzle family "
+                        + "only — 'avatar' is a different challenge behind a different endpoint, "
+                        + "and the server refuses it rather than returning a puzzle answer the "
+                        + "target site would reject.");
+                }
+            }
+
+            var unknown = UnknownKeys(parameters, CapySubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for Capy: {ReprList(unknown)}.");
+            }
+        }
+
+        private static void ValidateCaptchaFoxSubmit(IDictionary<string, object?> parameters)
+        {
+            foreach (var key in new[] { "sitekey", "pageurl" })
+            {
+                if (!parameters.TryGetValue(key, out var value) || !IsTruthy(value))
+                {
+                    throw new ValidationException($"'{key}' is required for CaptchaFox.");
+                }
+            }
+
+            var unknown = UnknownKeys(parameters, CaptchaFoxSubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for CaptchaFox: {ReprList(unknown)}.");
+            }
+        }
+
+        private static void ValidateFriendlyCaptchaSubmit(IDictionary<string, object?> parameters)
+        {
+            foreach (var key in new[] { "sitekey", "pageurl" })
+            {
+                if (!parameters.TryGetValue(key, out var value) || !IsTruthy(value))
+                {
+                    throw new ValidationException($"'{key}' is required for Friendly Captcha.");
+                }
+            }
+
+            if (parameters.TryGetValue("version", out var version) && version != null)
+            {
+                var text = Convert.ToString(version, CultureInfo.InvariantCulture);
+                if (!string.IsNullOrEmpty(text)
+                    && Array.IndexOf(FriendlyCaptchaVersions, text!.ToUpperInvariant()) < 0)
+                {
+                    throw new ValidationException(
+                        $"Unsupported Friendly Captcha version '{text}'. Use 'v1' or 'v2' "
+                        + "(a bare 1 or 2 is accepted too). The two are different protocols "
+                        + "sharing one sitekey namespace, so solving the wrong one returns a "
+                        + "well-formed token the target site rejects.");
+                }
+            }
+
+            var unknown = UnknownKeys(parameters, FriendlyCaptchaSubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for Friendly Captcha: {ReprList(unknown)}.");
             }
         }
 

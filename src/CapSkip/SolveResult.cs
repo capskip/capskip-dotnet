@@ -4,7 +4,8 @@ namespace CapSkip
     /// The result every solve method returns. Mirrors the dictionary the other
     /// CapSkip SDKs return (<c>captchaId</c>, <c>code</c>, for Turnstile
     /// <c>userAgent</c>, for GeeTest <c>challenge</c>/<c>validate</c>/<c>seccode</c>, and for
-    /// ALTCHA <c>token</c>/<c>number</c>).
+    /// ALTCHA <c>token</c>/<c>number</c>, and for Capy
+    /// <c>captchakey</c>/<c>challengekey</c>/<c>answer</c>).
     /// </summary>
     public sealed class SolveResult
     {
@@ -20,8 +21,10 @@ namespace CapSkip
         public string Code { get; set; } = "";
 
         /// <summary>
-        /// Turnstile only — the User-Agent to send when submitting the token.
-        /// <see langword="null"/> for other captcha types.
+        /// Turnstile and CaptchaFox — the User-Agent to send when submitting the
+        /// token. For CaptchaFox this is the browser's own, not one you sent, and it
+        /// stays <see langword="null"/> when the solve captured none rather than
+        /// being guessed. <see langword="null"/> for other captcha types.
         /// </summary>
         public string? UserAgent { get; set; }
 
@@ -56,9 +59,41 @@ namespace CapSkip
         /// </summary>
         public long? Number { get; set; }
 
+        /// <summary>
+        /// Capy only — the value for the target form's <c>capy_captchakey</c> field.
+        /// <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? CaptchaKey { get; set; }
+
+        /// <summary>
+        /// Capy only — the value for the target form's <c>capy_challengekey</c>
+        /// field. <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? ChallengeKey { get; set; }
+
+        /// <summary>
+        /// Capy only — the value for the target form's <c>capy_answer</c> field. The
+        /// drag path the widget would have recorded; submit it verbatim, without
+        /// trimming or re-encoding it. <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? Answer { get; set; }
+
+        /// <summary>
+        /// Capy only — empty for a puzzle solve. Present for shape compatibility with
+        /// 2Captcha's documented response; it carries nothing.
+        /// <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? RespKey { get; set; }
+
         /// <summary>A compact, human-readable representation for logging.</summary>
         public override string ToString()
         {
+            if (Answer != null)
+            {
+                return $"SolveResult {{ CaptchaId = {CaptchaId}, CaptchaKey = {CaptchaKey}, "
+                    + $"ChallengeKey = {ChallengeKey}, Answer = {Answer} }}";
+            }
+
             if (Number != null)
             {
                 return $"SolveResult {{ CaptchaId = {CaptchaId}, Number = {Number}, "

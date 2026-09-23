@@ -23,8 +23,11 @@ The SDK only supports the four captcha types documented by CapSkip.
 | Cloudflare Turnstile | `TurnstileAsync()` | `turnstile` |
 | GeeTest v3 (slide) | `GeetestAsync()` | `geetest` |
 | ALTCHA (proof-of-work) | `AltchaAsync()` | `altcha` |
+| Capy Puzzle (slide) | `CapyAsync()` | `capy` |
+| CaptchaFox (widget) | `CaptchaFoxAsync()` | `captchafox` |
+| Friendly Captcha (proof-of-work) | `FriendlyCaptchaAsync()` | `friendly_captcha` |
 
-**Proxy** is supported for reCAPTCHA, Turnstile, GeeTest, and ALTCHA — not for image
+**Proxy** is supported for every method except image
 captcha. For ALTCHA the proxy is used only for the `challenge_url` fetch.
 
 ---
@@ -395,6 +398,229 @@ purely visual and never reaches CapSkip.
 
 ---
 
+## 7. Capy Puzzle — `CapyAsync(sitekey, url, options?)`
+
+Capy is a slide puzzle: a piece has to be dragged into the hole cut out of a
+photograph. CapSkip locates the hole and produces the drag path — one HTTP fetch
+plus pixel math, no browser.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `capy` |
+| `captchakey` | string | Yes | The site's public Capy key, conventionally prefixed `PUZZLE_`. The SDK sends its `sitekey` argument here. |
+| `pageurl` | string | Yes | Full URL of the page the captcha is on |
+| `api_server` | string | No | Root of the Capy API the key lives behind. Default `https://jp.api.capy.me` |
+| `version` | string | No | `puzzle` (the default). Only the puzzle family is solved |
+| `useragent` | string | No | User-Agent to send with the puzzle request |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | Proxy type |
+
+`sitekey` and `websiteKey` are accepted by the server as aliases for
+`captchakey`; the SDK sends the documented name.
+
+`["version"] = "avatar"` is refused by the SDK before the request is made. Avatar
+is a different challenge behind a different endpoint, and answering it with a
+puzzle answer would bill for a solve the target site rejects, indistinguishably
+from a broken solver.
+
+> `api.capy.me` no longer resolves, although several solver services still
+> document it. The live host is `jp.api.capy.me`; if a site's widget points
+> somewhere else, pass that as `api_server`.
+
+### Getting the captcha key
+
+It is in the page source as `capy_captchakey`, or in the widget script URL:
+`<script src="https://jp.api.capy.me/puzzle/get_js/?k=PUZZLE_XXXX">`.
+
+### GET `/res.php`
+
+The answer is **not a token**. It is an object, which the SDK expands into
+`CaptchaKey`, `ChallengeKey`, `Answer` and `RespKey`. See
+[Return value](#return-value).
+
+### SDK usage
+
+```csharp
+var result = await solver.CapyAsync(
+    "PUZZLE_Abc1dEFghIJKLM2no34P56q7rStu8v",
+    "https://example.com/login");
+
+// With a non-default API server
+var result = await solver.CapyAsync(
+    "PUZZLE_Abc1dEFghIJKLM2no34P56q7rStu8v",
+    "https://example.com/login",
+    new Dictionary<string, object?> { ["api_server"] = "https://jp.api.capy.me/" });
+
+// capy_captchakey, capy_challengekey, capy_answer
+result.CaptchaKey; result.ChallengeKey; result.Answer;
+```
+
+### Timing
+
+Capy grades the wall-clock gap between issuing the puzzle and verifying the
+answer, and refuses anything superhuman with `CAPTCHA verification failed` — the
+same message a wrong answer gets. CapSkip therefore holds every result until two
+seconds have elapsed since it drew the puzzle. This is invisible if you poll: the
+task simply takes about two seconds instead of a fifth of one. Nothing to
+configure.
+
+The challenge key is single-use and short-lived, so submit the three values
+promptly rather than caching them.
+
+---
+
+## 8. CaptchaFox — `CaptchaFoxAsync(sitekey, url, options?)`
+
+CaptchaFox scores the browser itself rather than asking the visitor to read
+anything; most visitors never see a puzzle. CapSkip drives the real widget in a
+real browser and returns the verification token.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `captchafox` |
+| `sitekey` | string | Yes | The public key the widget renders with, conventionally prefixed `sk_` |
+| `pageurl` | string | Yes | Full URL of the page the widget appears on |
+| `api_server` | string | No | Widget entry point. Default `https://cdn.captchafox.com/` |
+| `useragent` | string | No | Accepted for compatibility and not applied — CapSkip uses its own browser's identity |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | Proxy type |
+
+### Choosing the widget source
+
+| `api_server` | Token | Default |
+|---|---|---|
+| `https://cdn.captchafox.com/` | Plain | Yes |
+| `https://s.uicdn.com/mampkg/…` | `MAM_` prefixed | No |
+
+Read the value from the `<script>` tag that loads the widget. If you send the
+wrong one the solve still succeeds, but the token comes back in a format the
+target site will not accept — a silent verification failure rather than an error.
+
+### The page URL has to match the key
+
+CaptchaFox keys are registered against a list of allowed domains and the service
+checks the host before issuing anything. A correct key used on a page outside
+that list is refused permanently, not intermittently. CapSkip reports that case
+rather than retrying it, because retrying cannot help.
+
+### Challenge types
+
+| Challenge | Frequency | Supported |
+|---|---|---|
+| Invisible | Usually | Yes |
+| Slide | Sometimes | Yes |
+| Image select | Rarely | No |
+| Audio | Rarely | No |
+
+The two unsupported ones are uncommon and a retry usually draws a different
+challenge, so treat an unsolvable result as a signal to resubmit rather than a
+permanent failure of the key.
+
+### SDK usage
+
+```csharp
+var result = await solver.CaptchaFoxAsync(
+    "sk_xtNxpk6fCdFbxh1_xJeGflSdCE9tn99G",
+    "https://example.com/signup");
+
+// Post in the form field named cf-captcha-response
+result.Token;
+
+// Submit under the UA that minted the token, not your own
+result.UserAgent;
+```
+
+Uses `recaptchaTimeout` — it is a real browser session, and longer again when an
+interactive challenge is drawn.
+
+---
+
+## 9. Friendly Captcha — `FriendlyCaptchaAsync(sitekey, url, options?)`
+
+Proof-of-work, with nothing shown on screen. The widget searches for values that
+hash below a difficulty the service sets per request.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `friendly_captcha` |
+| `sitekey` | string | Yes | The `data-sitekey` of the element carrying `class="frc-captcha"` |
+| `pageurl` | string | Yes | Full URL of the page the widget appears on |
+| `version` | string | No | `v1` (default) or `v2`; a bare `1` or `2` is accepted |
+| `module_script` | string | No | `src` of the widget script tag carrying `type="module"` |
+| `nomodule_script` | string | No | `src` of the widget script tag carrying `nomodule` |
+| `api_server` | string | No | Data residency endpoint: `global` (default), `eu`, or a full URL |
+| `useragent` | string | No | User-Agent to send with the request |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | Proxy type |
+
+### Version 1 and version 2
+
+Two entirely different protocols ship under this one name, and a sitekey does not
+tell you which one a site uses — they share a brand and a sitekey namespace and
+nothing else. Both are live. Solve the wrong one and you get a well-formed token
+the target site rejects, with no indication that the version was the problem.
+
+| `version` | Widget package | Script |
+|---|---|---|
+| `v1` | `friendly-challenge` | `widget.module.min.js` / `widget.min.js` |
+| `v2` | `@friendlycaptcha/sdk` | `site.min.js` |
+
+CapSkip decides in this order, stopping at the first answer: the `version`
+parameter; then the script URL from `module_script` or `nomodule_script`, which
+is the most reliable signal because it is the build the site actually loads; then
+v1. The SDK refuses any other `version` value locally.
+
+### Submitting the token
+
+| `version` | Form field |
+|---|---|
+| `v1` | `frc-captcha-solution` |
+| `v2` | `frc-captcha-response` |
+
+The field names differ, which is what catches an integration moved from one to
+the other. A v1 token is four dot-separated parts and runs to a few hundred
+characters; a v2 token is a single opaque string beginning `AQQA.` and is roughly
+six kilobytes, so size whatever carries it accordingly.
+
+### SDK usage
+
+```csharp
+// Say which version
+var result = await solver.FriendlyCaptchaAsync(
+    "FCMGEMUD2M567T8G",
+    "https://example.com/signup",
+    new Dictionary<string, object?> { ["version"] = "v2" });
+
+// …or let the script URL decide it
+var result = await solver.FriendlyCaptchaAsync(
+    "FCMGEMUD2M567T8G",
+    "https://example.com/signup",
+    new Dictionary<string, object?>
+    {
+        ["module_script"] = "https://cdn.example.com/@friendlycaptcha/sdk@0.1.6/site.min.js",
+    });
+
+result.Token;
+```
+
+Uses `recaptchaTimeout`: the service decides how much work a request is worth at
+the moment it is made, so solve time is not a constant, and v2 always solves in a
+browser.
+
+---
+
 ## Return value
 
 Every solve method returns a `SolveResult`:
@@ -404,9 +630,28 @@ public sealed class SolveResult
 {
     public string CaptchaId { get; }
     public string Code { get; }
-    public string? UserAgent { get; }  // Turnstile only, when the json=1 poll includes it
+    public string? UserAgent { get; }    // Turnstile & CaptchaFox, when the poll includes it
+    public string? Challenge { get; }    // GeeTest
+    public string? Validate { get; }     // GeeTest
+    public string? Seccode { get; }      // GeeTest
+    public string? Token { get; }        // ALTCHA, CaptchaFox, Friendly Captcha
+    public long? Number { get; }         // ALTCHA
+    public string? CaptchaKey { get; }   // Capy — capy_captchakey
+    public string? ChallengeKey { get; } // Capy — capy_challengekey
+    public string? Answer { get; }       // Capy — capy_answer (the drag path)
+    public string? RespKey { get; }      // Capy — empty; carries nothing
 }
 ```
+
+CaptchaFox and Friendly Captcha set `Token` to the same string as `Code`, named
+for the form field it goes in. CaptchaFox also sets `UserAgent` when the solve
+reported one — the UA the browser minted the token under, not one you sent; it
+stays `null` when the solve captured none rather than being guessed.
+
+Capy's answer is an object rather than a token. `Code` carries it as JSON — the
+same text a plain-text poll delivers after `OK|` — and it is expanded into
+`CaptchaKey`, `ChallengeKey`, `Answer` and `RespKey`, the fields the target form
+takes.
 
 ---
 
@@ -423,6 +668,10 @@ Convenience aliases mapped before sending to CapSkip:
 | `data_s` | `data-s` |
 | `apiServer` | `api_server` |
 | `api_subdomain` | `api_server` |
+| `userAgent` / `user_agent` | `useragent` |
+| `captchaKey` | `captchakey` |
+| `moduleScript` | `module_script` |
+| `nomoduleScript` / `noModuleScript` | `nomodule_script` |
 | `proxy` (`Proxy` / dictionary) | `proxy` + `proxytype` strings |
 
 ```csharp
