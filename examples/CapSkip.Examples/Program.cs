@@ -32,6 +32,10 @@ switch (command)
     case "friendlycaptcha":
         await FriendlyCaptchaExample.RunAsync();
         break;
+    case "awswaf":
+    case "amazonwaf":
+        await AmazonWafExample.RunAsync();
+        break;
     case "async":
         await AsyncExample.RunAsync();
         break;
@@ -49,6 +53,7 @@ switch (command)
         Console.WriteLine("  capy       Solve a Capy Puzzle (returns three form values, not a token)");
         Console.WriteLine("  captchafox Solve a CaptchaFox widget");
         Console.WriteLine("  friendly   Solve a Friendly Captcha (say which version: v1 or v2)");
+        Console.WriteLine("  awswaf     Solve an AWS WAF CAPTCHA (returns a voucher pair, not a token)");
         Console.WriteLine("  async      Solve several captchas concurrently");
         Console.WriteLine("  verify     Check CapSkip is running (accepts --host --port --api-key)");
         Console.WriteLine();

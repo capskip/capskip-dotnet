@@ -4,8 +4,9 @@ namespace CapSkip
     /// The result every solve method returns. Mirrors the dictionary the other
     /// CapSkip SDKs return (<c>captchaId</c>, <c>code</c>, for Turnstile
     /// <c>userAgent</c>, for GeeTest <c>challenge</c>/<c>validate</c>/<c>seccode</c>, and for
-    /// ALTCHA <c>token</c>/<c>number</c>, and for Capy
-    /// <c>captchakey</c>/<c>challengekey</c>/<c>answer</c>).
+    /// ALTCHA <c>token</c>/<c>number</c>, for Capy
+    /// <c>captchakey</c>/<c>challengekey</c>/<c>answer</c>, and for AWS WAF
+    /// <c>captcha_voucher</c>/<c>existing_token</c>).
     /// </summary>
     public sealed class SolveResult
     {
@@ -85,9 +86,30 @@ namespace CapSkip
         /// </summary>
         public string? RespKey { get; set; }
 
+        /// <summary>
+        /// AWS WAF only — the <c>captcha_voucher</c> AWS issued for the answered
+        /// puzzle. Works only together with <see cref="ExistingToken"/>: POST both,
+        /// as JSON under their wire names, to the <c>voucher</c> endpoint beside the
+        /// page's challenge.js. <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? CaptchaVoucher { get; set; }
+
+        /// <summary>
+        /// AWS WAF only — the <c>existing_token</c> the voucher was issued for.
+        /// Works only together with <see cref="CaptchaVoucher"/>.
+        /// <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? ExistingToken { get; set; }
+
         /// <summary>A compact, human-readable representation for logging.</summary>
         public override string ToString()
         {
+            if (CaptchaVoucher != null)
+            {
+                return $"SolveResult {{ CaptchaId = {CaptchaId}, CaptchaVoucher = {CaptchaVoucher}, "
+                    + $"ExistingToken = {ExistingToken} }}";
+            }
+
             if (Answer != null)
             {
                 return $"SolveResult {{ CaptchaId = {CaptchaId}, CaptchaKey = {CaptchaKey}, "

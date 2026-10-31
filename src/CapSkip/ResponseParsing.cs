@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace CapSkip
@@ -13,6 +14,16 @@ namespace CapSkip
     /// </summary>
     internal static class ResponseParsing
     {
+        /// <summary>
+        /// How an object answer is written back into <see cref="SolveResult.Code"/>.
+        /// Code is a .NET string, never embedded in HTML by the SDK, so only what
+        /// JSON itself requires is escaped.
+        /// </summary>
+        private static readonly JsonSerializerOptions RawAnswerJson = new JsonSerializerOptions
+        {
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        };
+
         /// <summary>
         /// Parse a <c>res.php</c> body. Returns the token <see cref="string"/> in plain
         /// mode, or the parsed object (as a <c>Dictionary&lt;string, object?&gt;</c>) in
@@ -183,12 +194,15 @@ namespace CapSkip
                 return text;
             }
 
-            // An object or array answer — Capy's three-value solution. Serializing it
-            // keeps Code a string without losing anything the caller may want to
-            // forward verbatim.
+            // An object or array answer — Capy's three-value solution, or AWS WAF's
+            // voucher and token. Serializing it keeps Code a string without losing
+            // anything the caller may want to forward verbatim. The relaxed encoder
+            // leaves +, / and = as they are: AWS WAF tokens are base64, and the
+            // default encoder would turn every + into +, valid JSON but not the
+            // text a plain-text poll delivers after OK|.
             if (request is IDictionary<string, object?> || request is IList<object?>)
             {
-                return JsonSerializer.Serialize(request);
+                return JsonSerializer.Serialize(request, RawAnswerJson);
             }
 
             return Convert.ToString(request, CultureInfo.InvariantCulture) ?? string.Empty;
@@ -209,25 +223,70 @@ namespace CapSkip
         /// </remarks>
         internal static SolveResult ApplyCapySolution(SolveResult result)
         {
-            Dictionary<string, object?> payload;
-            try
-            {
-                payload = ParseJsonObject(result.Code ?? string.Empty);
-            }
-            catch (JsonException)
+            if (!TryParseObjectAnswer(result, out var payload))
             {
                 return result;
             }
 
-            result.CaptchaKey = CapyField(payload, "captchakey") ?? result.CaptchaKey;
-            result.ChallengeKey = CapyField(payload, "challengekey") ?? result.ChallengeKey;
-            result.Answer = CapyField(payload, "answer") ?? result.Answer;
-            result.RespKey = CapyField(payload, "respKey") ?? result.RespKey;
+            result.CaptchaKey = ObjectAnswerField(payload, "captchakey") ?? result.CaptchaKey;
+            result.ChallengeKey = ObjectAnswerField(payload, "challengekey") ?? result.ChallengeKey;
+            result.Answer = ObjectAnswerField(payload, "answer") ?? result.Answer;
+            result.RespKey = ObjectAnswerField(payload, "respKey") ?? result.RespKey;
 
             return result;
         }
 
-        private static string? CapyField(IDictionary<string, object?> payload, string key)
+        /// <summary>
+        /// Expand an AWS WAF answer — an object rather than a token — into
+        /// <see cref="SolveResult.CaptchaVoucher"/> and
+        /// <see cref="SolveResult.ExistingToken"/>.
+        /// </summary>
+        /// <remarks>
+        /// The two only work as a pair: the voucher AWS issued for the answered
+        /// puzzle, and the token it was issued for. The site's own <c>voucher</c>
+        /// endpoint trades them for the <c>aws-waf-token</c> cookie.
+        /// <see cref="SolveResult.Code"/> keeps the raw JSON answer. If it does not
+        /// parse, the result is returned untouched rather than masking the server's
+        /// reply.
+        /// </remarks>
+        internal static SolveResult ApplyAmazonWafSolution(SolveResult result)
+        {
+            if (!TryParseObjectAnswer(result, out var payload))
+            {
+                return result;
+            }
+
+            result.CaptchaVoucher = ObjectAnswerField(payload, "captcha_voucher") ?? result.CaptchaVoucher;
+            result.ExistingToken = ObjectAnswerField(payload, "existing_token") ?? result.ExistingToken;
+
+            return result;
+        }
+
+        /// <summary>
+        /// Read an answer that is an object rather than a token out of
+        /// <see cref="SolveResult.Code"/>.
+        /// </summary>
+        /// <remarks>
+        /// Code always holds that object as JSON: a json=1 poll puts the object
+        /// straight into <c>request</c> and <see cref="ApplyPollResult"/>
+        /// re-serializes it, while a plain-text poll delivers the same JSON after
+        /// <c>OK|</c>. Returns false when it does not parse as an object.
+        /// </remarks>
+        private static bool TryParseObjectAnswer(SolveResult result, out Dictionary<string, object?> payload)
+        {
+            try
+            {
+                payload = ParseJsonObject(result.Code ?? string.Empty);
+                return true;
+            }
+            catch (JsonException)
+            {
+                payload = new Dictionary<string, object?>();
+                return false;
+            }
+        }
+
+        private static string? ObjectAnswerField(IDictionary<string, object?> payload, string key)
         {
             return payload.TryGetValue(key, out var value) && value != null
                 ? Convert.ToString(value, CultureInfo.InvariantCulture)

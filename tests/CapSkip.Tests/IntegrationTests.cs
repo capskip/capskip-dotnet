@@ -418,5 +418,92 @@ namespace CapSkip.Tests
                 Url,
                 new Dictionary<string, object?> { ["version"] = "v3" }));
         }
+
+        // -- AWS WAF -----------------------------------------------------------
+
+        private const string WafKey =
+            "AQIDAHjcYuEXAMPLEghicBgQ/7bFaQZ+m5FKCMDnO+vTbNg96AHDh0IR5vgzHNceHYqZR+GOAAAAfjB8";
+
+        private const string WafIv = "CgAFRDIjfgAAA5yY";
+
+        private const string WafContext =
+            "Rbp3r8fvbuhmrCqpUe8Mh1TLvs8OSKJZiSs2vCF4dt9rxVZI7xYJa2n5k/9r+XaXe7KUIu2I8nXTDHHkDvIOTDc2";
+
+        private const string WafChallengeJs =
+            "https://3f2a9c7d41b0.edge.sdk.awswaf.com/3f2a9c7d41b0/8e51d0c7a2f4/challenge.js";
+
+        private const string WafJsapi =
+            "https://5b7e0a19c3d8.us-east-1.captcha-sdk.awswaf.com/5b7e0a19c3d8/jsapi.js";
+
+        [Fact]
+        public async Task AmazonWafChallengePage()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.AmazonWafAsync(WafKey, Url, new Dictionary<string, object?>
+            {
+                ["iv"] = WafIv,
+                ["context"] = WafContext,
+                ["challenge_script"] = WafChallengeJs,
+            });
+
+            Assert.Equal(MockServer.AmazonWafCaptchaVoucher, result.CaptchaVoucher);
+            Assert.Equal(MockServer.AmazonWafExistingToken, result.ExistingToken);
+            Assert.Equal(MockServer.AmazonWafSolutionJson, result.Code);
+            Assert.False(string.IsNullOrEmpty(result.CaptchaId));
+        }
+
+        [Fact]
+        public async Task AmazonWafWidgetPage()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.AmazonWafAsync(
+                WafKey + "_0_1", Url, new Dictionary<string, object?> { ["jsapiScript"] = WafJsapi });
+
+            Assert.Equal(MockServer.AmazonWafCaptchaVoucher, result.CaptchaVoucher);
+            Assert.Equal(MockServer.AmazonWafExistingToken, result.ExistingToken);
+        }
+
+        /// <summary>
+        /// The keys carry +, / and =, which a form body has to URL-encode; a key
+        /// mangled on the way would be a different firewall configuration.
+        /// </summary>
+        [Fact]
+        public async Task AmazonWafKeysWithPlusSlashEqualsCrossTheWire()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.AmazonWafAsync(WafKey + "==", Url, new Dictionary<string, object?>
+            {
+                ["iv"] = WafIv,
+                ["context"] = WafContext,
+            });
+
+            var sent = _server.Submitted(result.CaptchaId);
+            Assert.Equal(WafKey + "==", sent["sitekey"]);
+            Assert.Equal(WafContext, sent["context"]);
+            Assert.Equal(MockServer.AmazonWafExistingToken, result.ExistingToken);
+        }
+
+        [Fact]
+        public async Task AmazonWafLoneIvIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(() => solver.AmazonWafAsync(
+                WafKey, Url, new Dictionary<string, object?> { ["iv"] = WafIv }));
+        }
+
+        [Fact]
+        public async Task AmazonWafOffAwsScriptIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(() => solver.AmazonWafAsync(
+                WafKey,
+                Url,
+                new Dictionary<string, object?> { ["jsapiScript"] = "https://evil.example/jsapi.js" }));
+        }
     }
 }

@@ -10,9 +10,9 @@ namespace CapSkip
 {
     /// <summary>
     /// Client for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3,
-    /// Cloudflare Turnstile, GeeTest v3, and ALTCHA). Every solve method is asynchronous
-    /// and
-    /// returns a <see cref="SolveResult"/>.
+    /// Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly
+    /// Captcha and AWS WAF). Every solve method is asynchronous and returns a
+    /// <see cref="SolveResult"/>.
     /// </summary>
     public class CapSkipClient
     {
@@ -23,7 +23,7 @@ namespace CapSkip
         internal const double InitialPollingInterval = 0.25;
 
         /// <summary>The installed SDK version.</summary>
-        public static readonly string Version = "1.1.0";
+        public static readonly string Version = "1.4.0";
 
         /// <summary>CapSkip API key sent with every request.</summary>
         public string ApiKey { get; }
@@ -423,6 +423,70 @@ namespace CapSkip
             return ResponseParsing.ApplyTokenSolution(result);
         }
 
+        /// <summary>Solve an AWS WAF (Amazon WAF) CAPTCHA.</summary>
+        /// <param name="sitekey">
+        /// On a challenge page (the HTTP 405 page carrying <c>window.gokuProps</c>),
+        /// <c>gokuProps.key</c>. On a widget page
+        /// (<c>AwsWafCaptcha.renderCaptcha</c>), the widget's <c>apiKey</c>.
+        /// </param>
+        /// <param name="url">Full http or https URL of the page the captcha appears on.</param>
+        /// <param name="options">
+        /// On a challenge page, optional <c>iv</c> and <c>context</c>
+        /// (<c>gokuProps.iv</c> and <c>gokuProps.context</c> — send both or neither;
+        /// left out, CapSkip reads them from <paramref name="url"/> at solve time),
+        /// plus <c>challenge_script</c> and <c>captcha_script</c> with the full URLs
+        /// of the page's challenge.js and captcha.js. On a widget page,
+        /// <c>jsapiScript</c> with the full URL of jsapi.js and no iv/context.
+        /// <c>challengeScript</c>, <c>captchaScript</c> and <c>jsapi_script</c> are
+        /// accepted as aliases. Optional <c>proxy</c>.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result carrying <see cref="SolveResult.CaptchaVoucher"/> and
+        /// <see cref="SolveResult.ExistingToken"/>, plus the raw answer as JSON in
+        /// <see cref="SolveResult.Code"/>. This is not a token: the two values only
+        /// work as a pair.
+        /// </returns>
+        /// <remarks>
+        /// Every script URL must be an https URL on an awswaf.com host; anything else
+        /// is refused with a <see cref="ValidationException"/> before the request is
+        /// sent, because CapSkip POSTs the solution to the host the script names. POST
+        /// <c>{"captcha_voucher": ..., "existing_token": ...}</c> as JSON to the
+        /// <c>voucher</c> endpoint beside the page's challenge.js; the response's
+        /// <c>token</c> is the <c>aws-waf-token</c> cookie. Exchange the pair as soon
+        /// as it arrives rather than storing it for later.
+        /// </remarks>
+        public async Task<SolveResult> AmazonWafAsync(
+            string sitekey,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // A real browser mints the token the voucher is issued for, and the
+            // puzzle rounds go through AWS on top of that, so it gets the longer of
+            // the two timeouts unless the caller asked for a specific one.
+            var pars = new Dictionary<string, object?>
+            {
+                ["timeout"] = RecaptchaTimeout,
+                ["sitekey"] = sitekey,
+                ["url"] = url,
+            };
+
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "amazon_waf";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyAmazonWafSolution(result);
+        }
+
         /// <summary>Submit then poll to completion. Used by the higher-level solve methods.</summary>
         public async Task<SolveResult> SolveAsync(
             IDictionary<string, object?> options,
@@ -603,6 +667,11 @@ namespace CapSkip
             if (method == "friendly_captcha")
             {
                 return ApiParams.PrepareSubmitParams(parameters, "friendly_captcha");
+            }
+
+            if (method == "amazon_waf")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "amazon_waf");
             }
 
             return ApiParams.ApplyProxy(ApiParams.ApplyParamAliases(parameters));

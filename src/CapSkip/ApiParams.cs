@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace CapSkip
 {
@@ -67,6 +68,28 @@ namespace CapSkip
             "api_server", "useragent", "json", "proxy", "proxytype",
         };
 
+        internal static readonly HashSet<string> AmazonWafSubmit = new HashSet<string>
+        {
+            "method", "sitekey", "pageurl", "iv", "context", "challenge_script",
+            "captcha_script", "jsapiScript", "json", "proxy", "proxytype",
+        };
+
+        /// <summary>
+        /// The script parameters of an AWS WAF task. CapSkip POSTs the solution to
+        /// the host these name, so it refuses any that is not a genuine AWS WAF one.
+        /// </summary>
+        internal static readonly string[] AmazonWafScripts = { "challenge_script", "captcha_script", "jsapiScript" };
+
+        /// <summary>The three script files an AWS WAF integration loads.</summary>
+        private static readonly string[] AmazonWafScriptFiles = { "challenge.js", "captcha.js", "jsapi.js" };
+
+        /// <summary>
+        /// The server's own test for the directory part of a script path: one or
+        /// more <c>[A-Za-z0-9_-]</c> segments.
+        /// </summary>
+        private static readonly Regex AmazonWafScriptDirectory =
+            new Regex("^(/[A-Za-z0-9_-]+)+$", RegexOptions.CultureInvariant);
+
         /// <summary>
         /// CapSkip solves the puzzle family only. <c>avatar</c> is a different
         /// challenge behind a different endpoint; the server refuses it at submit
@@ -110,6 +133,14 @@ namespace CapSkip
                 new KeyValuePair<string, string>("moduleScript", "module_script"),
                 new KeyValuePair<string, string>("nomoduleScript", "nomodule_script"),
                 new KeyValuePair<string, string>("noModuleScript", "nomodule_script"),
+
+                // AWS WAF: the API documents challenge_script / captcha_script in
+                // snake case and jsapiScript in camel case, as 2Captcha does. Accept
+                // the other spelling of each, which is what createTask-style callers
+                // arrive with.
+                new KeyValuePair<string, string>("challengeScript", "challenge_script"),
+                new KeyValuePair<string, string>("captchaScript", "captcha_script"),
+                new KeyValuePair<string, string>("jsapi_script", "jsapiScript"),
             };
 
         /// <summary>Map friendly parameter names (e.g. <c>url</c>) to their API names (<c>pageurl</c>).</summary>
@@ -215,6 +246,13 @@ namespace CapSkip
                 case "friendly_captcha":
                     prepared = DropUnset(prepared);
                     ValidateFriendlyCaptchaSubmit(prepared);
+                    break;
+                case "amazon_waf":
+                    // An optional left as "" means "not sent" to the server, exactly
+                    // like null, so it is dropped rather than tripping the iv/context
+                    // pairing.
+                    prepared = DropUnsetOrEmpty(prepared);
+                    ValidateAmazonWafSubmit(prepared);
                     break;
             }
 
@@ -499,6 +537,112 @@ namespace CapSkip
             {
                 throw new ValidationException(
                     $"Unsupported parameters for Friendly Captcha: {ReprList(unknown)}.");
+            }
+        }
+
+        /// <summary>Like <see cref="DropUnset"/>, but an empty string counts as unset too.</summary>
+        private static Dictionary<string, object?> DropUnsetOrEmpty(IDictionary<string, object?> parameters)
+        {
+            var outParams = new Dictionary<string, object?>();
+            foreach (var pair in parameters)
+            {
+                if (pair.Value != null && !(pair.Value is string text && text.Length == 0))
+                {
+                    outParams[pair.Key] = pair.Value;
+                }
+            }
+
+            return outParams;
+        }
+
+        /// <summary>True for a script URL CapSkip will accept on an AWS WAF task.</summary>
+        /// <remarks>
+        /// Mirrors the server: an absolute https URL with no credentials and no
+        /// explicit non-default port, on a host under <c>.awswaf.com</c>, whose last
+        /// path segment is <c>challenge.js</c>, <c>captcha.js</c> or <c>jsapi.js</c>
+        /// below one or more <c>[A-Za-z0-9_-]</c> directories. A query string is
+        /// allowed. The server only applies the check once the task is queued, so
+        /// failing here saves a submit that could never solve.
+        /// </remarks>
+        internal static bool IsAmazonWafScriptUrl(object? value)
+        {
+            var text = Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim();
+            if (string.IsNullOrEmpty(text) || !Uri.TryCreate(text, UriKind.Absolute, out var uri))
+            {
+                return false;
+            }
+
+            if (uri.Scheme != Uri.UriSchemeHttps
+                || !string.IsNullOrEmpty(uri.UserInfo)
+                || !uri.IsDefaultPort
+                || !uri.Host.EndsWith(".awswaf.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var path = uri.AbsolutePath;
+            var slash = path.LastIndexOf('/');
+            if (slash < 0)
+            {
+                return false;
+            }
+
+            var fileName = path.Substring(slash + 1);
+            var directory = path.Substring(0, slash);
+            return Array.IndexOf(AmazonWafScriptFiles, fileName) >= 0
+                && AmazonWafScriptDirectory.IsMatch(directory);
+        }
+
+        private static void ValidateAmazonWafSubmit(IDictionary<string, object?> parameters)
+        {
+            // Without sitekey the server answers ERROR_BAD_PARAMETERS and without
+            // pageurl ERROR_PAGEURL. Fail locally so a missing value costs no round-trip.
+            foreach (var key in new[] { "sitekey", "pageurl" })
+            {
+                if (!parameters.TryGetValue(key, out var value) || !IsTruthy(value))
+                {
+                    throw new ValidationException($"'{key}' is required for Amazon WAF.");
+                }
+            }
+
+            var pageurl = (Convert.ToString(parameters["pageurl"], CultureInfo.InvariantCulture) ?? string.Empty)
+                .Trim();
+            if (pageurl.IndexOf("://", StringComparison.Ordinal) < 0
+                || !Uri.TryCreate(pageurl, UriKind.Absolute, out var pageUri)
+                || (pageUri.Scheme != Uri.UriSchemeHttp && pageUri.Scheme != Uri.UriSchemeHttps))
+            {
+                throw new ValidationException(
+                    $"'pageurl' must be a full http or https URL for Amazon WAF, got '{pageurl}'.");
+            }
+
+            // iv and context come off the same challenge page and only work as a
+            // pair; the server refuses one without the other with ERROR_BAD_PARAMETERS.
+            var hasIv = parameters.TryGetValue("iv", out var iv) && IsTruthy(iv);
+            var hasContext = parameters.TryGetValue("context", out var context) && IsTruthy(context);
+            if (hasIv != hasContext)
+            {
+                throw new ValidationException(
+                    "Amazon WAF 'iv' and 'context' go together: send both (a challenge "
+                    + "page) or neither (a widget page, or let CapSkip read them from pageurl).");
+            }
+
+            foreach (var key in AmazonWafScripts)
+            {
+                if (parameters.TryGetValue(key, out var script) && IsTruthy(script)
+                    && !IsAmazonWafScriptUrl(script))
+                {
+                    throw new ValidationException(
+                        $"'{key}' must be the https URL of an AWS WAF script on an awswaf.com "
+                        + $"host (challenge.js, captcha.js or jsapi.js), got '{script}'. "
+                        + "CapSkip refuses any other script, because it is not an AWS WAF integration.");
+                }
+            }
+
+            var unknown = UnknownKeys(parameters, AmazonWafSubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for Amazon WAF: {ReprList(unknown)}.");
             }
         }
 

@@ -5,6 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-11-01
+
+### Added
+
+- **AWS WAF support** via `AmazonWafAsync(sitekey, url, options)`, sent as
+  `method=amazon_waf`. On a challenge page (the HTTP 405 page carrying
+  `window.gokuProps`) the sitekey is `gokuProps.key`, and the optional `iv` and
+  `context` are `gokuProps.iv` and `gokuProps.context` — send both or neither;
+  left out, CapSkip reads them from the page at solve time. `challenge_script` and
+  `captcha_script` take the full URLs of the page's challenge.js and captcha.js.
+  On a widget page the sitekey is the widget's `apiKey`, with `jsapiScript` set to
+  the full URL of jsapi.js.
+  An AWS WAF answer is **not a token**: the result carries `CaptchaVoucher` and
+  `ExistingToken`, which only work as a pair. POST them as JSON to the `voucher`
+  endpoint beside the page's challenge.js; the `token` in its response is the
+  `aws-waf-token` cookie. Exchange them immediately. `Code` keeps the raw JSON
+  answer.
+- `SolveResult.CaptchaVoucher` and `.ExistingToken` for AWS WAF.
+- Parameter aliases `challengeScript` for `challenge_script`, `captchaScript` for
+  `captcha_script`, and `jsapi_script` for `jsapiScript`.
+
+### Changed
+
+- An object answer re-serialized into `SolveResult.Code` no longer escapes `+`
+  (and the other HTML-sensitive characters) as `\uXXXX`, so `Code` carries the
+  same text a plain-text poll delivers after `OK|`. AWS WAF tokens are base64 and
+  routinely contain `+`; Capy answers never did, so they are unaffected.
+- `CapSkipClient.Version` reports the package version again; it had been left at
+  `1.1.0`.
+
+### Notes
+
+- Every script URL is checked locally against the server's own rule — an https
+  URL with no credentials or explicit port, on a host under `.awswaf.com`, ending
+  in `challenge.js`, `captcha.js` or `jsapi.js` below one or more
+  `[A-Za-z0-9_-]` directories. CapSkip POSTs the solution to the host the script
+  names, so it refuses any script that is not an AWS WAF integration.
+- `iv` without `context` (or the reverse) is refused locally, as is a `pageurl`
+  that is not an absolute http or https URL. An optional sent as an empty string
+  is treated as not sent, exactly as the server does.
+- AWS WAF uses `recaptchaTimeout`: a real browser mints the token the voucher is
+  issued for, and the puzzle rounds go through AWS on top of that.
+
 ## [1.3.0] - 2026-09-22
 
 ### Added

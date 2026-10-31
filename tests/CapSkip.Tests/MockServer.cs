@@ -71,6 +71,25 @@ namespace CapSkip.Tests
             + "aqwpWwdbzRWKY/UQAQwwpgAAAAAAAAAAM7hBvJOzqjc=."
             + "AAAAAArcCQABAAAAxv8QAAIAAACKYRgA.AgAB";
 
+        /// <summary>
+        /// An AWS WAF answer is two values that only work as a pair, so like Capy's
+        /// it is an object. The shapes follow what AWS really issues — a dotted
+        /// voucher, and a token of three colon-separated parts.
+        /// </summary>
+        public const string AmazonWafCaptchaVoucher =
+            "eyJ2b3VjaGVyIjoiRVhBTVBMRSJ9.9QwZcEXAMPLEvoucherJk4LmN0pQ";
+
+        public const string AmazonWafExistingToken =
+            "7d4c2a91-EXAMPLE-4f0b-9e6d-3a1b5c8e2f70:EQoAeXAMPLEtokenAAAA:Wm9wc2E=";
+
+        /// <summary>The AWS WAF solution object, exactly as CapSkip serializes it.</summary>
+        public const string AmazonWafSolutionJson =
+            "{\"captcha_voucher\":\"" + AmazonWafCaptchaVoucher + "\","
+            + "\"existing_token\":\"" + AmazonWafExistingToken + "\"}";
+
+        private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, string>> _submitted =
+            new ConcurrentDictionary<string, IReadOnlyDictionary<string, string>>();
+
         private readonly ConcurrentDictionary<string, string> _idType = new ConcurrentDictionary<string, string>();
         private readonly ConcurrentDictionary<string, int> _pollCount = new ConcurrentDictionary<string, int>();
         private int _ids;
@@ -238,6 +257,22 @@ namespace CapSkip.Tests
                     Send(stream, $"OK|{CaptchaFoxToken}");
                 }
             }
+            else if (_idType.TryGetValue(cid, out var wafType) && wafType == "amazon_waf")
+            {
+                // What CapSkip sends: the bare status/request pair, with the
+                // two-value object as `request` — no createTask `solution`.
+                if (wantJson)
+                {
+                    Send(
+                        stream,
+                        $"{{\"status\":1,\"request\":{AmazonWafSolutionJson}}}",
+                        "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{AmazonWafSolutionJson}");
+                }
+            }
             else if (_idType.TryGetValue(cid, out var friendlyType) && friendlyType == "friendly_captcha")
             {
                 if (wantJson)
@@ -309,6 +344,7 @@ namespace CapSkip.Tests
             }
 
             _idType[cid] = fields.TryGetValue("method", out var method) ? method : string.Empty;
+            _submitted[cid] = fields;
 
             // in.php returns JSON when the submit carried json=1, mirroring real CapSkip.
             if (fields.TryGetValue("json", out var jsonFlag) && jsonFlag == "1")
@@ -320,6 +356,12 @@ namespace CapSkip.Tests
                 Send(stream, $"OK|{cid}");
             }
         }
+
+        /// <summary>
+        /// The form fields in.php received for a captcha id, decoded the way a real
+        /// server decodes them — so a test can check a value crossed the wire intact.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> Submitted(string captchaId) => _submitted[captchaId];
 
         private static Dictionary<string, string> ParseQuery(string query)
         {
