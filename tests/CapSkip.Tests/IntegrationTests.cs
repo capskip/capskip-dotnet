@@ -505,5 +505,68 @@ namespace CapSkip.Tests
                 Url,
                 new Dictionary<string, object?> { ["jsapiScript"] = "https://evil.example/jsapi.js" }));
         }
+
+        // -- DataDome ----------------------------------------------------------
+
+        private const string DdPage = "https://www.example.com/";
+
+        private const string DdCaptchaUrl =
+            "https://geo.captcha-delivery.com/captcha/?initialCid=AHrlqAAAAAMA7KBvCr0n4cEAG330MA%3D%3D"
+            + "&hash=D013AA612AB2224D03B2318D0F5B19&cid=KzE6_pZBBTHdCdvZkauT9VAshi0wS7~v5_M_MacEtdw8"
+            + "&t=fe&referer=https%3A%2F%2Fwww.example.com%2F&s=45225&e=549255a0289eaf17af60822309ab8db4&dm=cd";
+
+        private const string DdUserAgent =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            + "(KHTML, like Gecko) Chrome/156.0.0.1 Safari/537.36";
+
+        private static string DdCookiePair => MockServer.DataDomeCookie.Split(';')[0];
+
+        /// <summary>
+        /// No proxy sent: CapSkip solved through its own DataDome list, so the result
+        /// names that proxy and the browser's User-Agent.
+        /// </summary>
+        [Fact]
+        public async Task DataDomeWithoutProxyReportsTheListProxy()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.DataDomeAsync(DdCaptchaUrl, DdPage);
+
+            Assert.Equal(MockServer.DataDomeCookie, result.Code);
+            Assert.Equal(DdCookiePair, result.Cookie);
+            Assert.Equal(MockServer.DataDomeBrowserUserAgent, result.UserAgent);
+            Assert.Equal(MockServer.DataDomeListProxy, result.Proxy);
+            Assert.Equal(DdCaptchaUrl, _server.Submitted(result.CaptchaId)["captcha_url"]);
+        }
+
+        /// <summary>
+        /// A proxy sent with the task: no proxy comes back, and the User-Agent is the
+        /// one sent — it crossed the wire intact, ~ ; ( ) and all.
+        /// </summary>
+        [Fact]
+        public async Task DataDomeWithOwnProxyAndUserAgent()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.DataDomeAsync(DdCaptchaUrl, DdPage, new Dictionary<string, object?>
+            {
+                ["userAgent"] = DdUserAgent,
+                ["proxy"] = new Proxy("HTTP", "login:p%40ss@203.0.113.7:3128"),
+            });
+
+            Assert.Equal(DdCookiePair, result.Cookie);
+            Assert.Equal(DdUserAgent, result.UserAgent);
+            Assert.Null(result.Proxy);
+            Assert.Equal("login:p%40ss@203.0.113.7:3128", _server.Submitted(result.CaptchaId)["proxy"]);
+        }
+
+        [Fact]
+        public async Task DataDomeBannedBlockPageIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => solver.DataDomeAsync(DdCaptchaUrl.Replace("t=fe", "t=bv"), DdPage));
+        }
     }
 }

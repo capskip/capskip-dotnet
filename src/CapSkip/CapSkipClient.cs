@@ -11,7 +11,7 @@ namespace CapSkip
     /// <summary>
     /// Client for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3,
     /// Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly
-    /// Captcha and AWS WAF). Every solve method is asynchronous and returns a
+    /// Captcha, AWS WAF and DataDome). Every solve method is asynchronous and returns a
     /// <see cref="SolveResult"/>.
     /// </summary>
     public class CapSkipClient
@@ -23,7 +23,7 @@ namespace CapSkip
         internal const double InitialPollingInterval = 0.25;
 
         /// <summary>The installed SDK version.</summary>
-        public static readonly string Version = "1.4.0";
+        public static readonly string Version = "1.5.0";
 
         /// <summary>CapSkip API key sent with every request.</summary>
         public string ApiKey { get; }
@@ -487,6 +487,81 @@ namespace CapSkip
             return ResponseParsing.ApplyAmazonWafSolution(result);
         }
 
+        /// <summary>Solve a DataDome challenge and return the <c>datadome</c> cookie.</summary>
+        /// <param name="captchaUrl">
+        /// The address of the challenge iframe on geo.captcha-delivery.com, under
+        /// <c>/captcha/</c> (slider) or <c>/interstitial/</c> (device check). Take the
+        /// iframe's src from the block page, or build it from the page's
+        /// <c>var dd</c> object as the API docs show. An HTML-escaped src
+        /// (<c>&amp;amp;</c>) is accepted and sent unchanged.
+        /// </param>
+        /// <param name="url">Full http or https URL of the page that returned the block page.</param>
+        /// <param name="options">
+        /// Optional <c>userAgent</c>: the one you will send with the cookie. It must be
+        /// Chrome for Windows with the same major version as the browser CapSkip
+        /// solves with; leave it out and CapSkip uses that browser's own. Optional
+        /// <c>proxy</c>: the proxy your later requests go through, as a URI string
+        /// (HTTP), a <see cref="CapSkip.Proxy"/>, or
+        /// <c>{ ["type"] = "HTTP", ["uri"] = "login:password@IP:PORT" }</c>.
+        /// <c>captchaUrl</c> and <c>captchaURL</c> are accepted as aliases of
+        /// <c>captcha_url</c>, and <c>url</c> of <c>pageurl</c>.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result carrying the cookie exactly as DataDome set it, attributes
+        /// included, in <see cref="SolveResult.Code"/>; just the <c>datadome=...</c>
+        /// pair, for a <c>Cookie</c> header, in <see cref="SolveResult.Cookie"/>; the
+        /// User-Agent the cookie was earned with in <see cref="SolveResult.UserAgent"/>;
+        /// and, only when you sent no proxy and CapSkip solved through its own
+        /// DataDome proxy list, that proxy as <c>host:port</c> in
+        /// <see cref="SolveResult.Proxy"/>.
+        /// </returns>
+        /// <remarks>
+        /// DataDome ties the cookie to the IP address and User-Agent that earned it:
+        /// send <see cref="SolveResult.UserAgent"/> with every request that carries
+        /// the cookie, from the same IP — through <see cref="SolveResult.Proxy"/>
+        /// when it is set, since the cookie works only through that proxy. A
+        /// <c>captchaUrl</c> carrying <c>t=bv</c> means the block page banned the
+        /// address that requested it; it is refused with a
+        /// <see cref="ValidationException"/> before the request is sent.
+        /// </remarks>
+        public async Task<SolveResult> DataDomeAsync(
+            string captchaUrl,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // A real browser session, slider or device check, so it gets the longer
+            // of the two timeouts unless the caller asked for a specific one.
+            var pars = new Dictionary<string, object?> { ["timeout"] = RecaptchaTimeout };
+
+            // Left out when null, so captchaUrl / url in options can stand in for
+            // them without tripping the alias conflict check.
+            if (captchaUrl != null)
+            {
+                pars["captcha_url"] = captchaUrl;
+            }
+
+            if (url != null)
+            {
+                pars["url"] = url;
+            }
+
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "datadome";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyDataDomeSolution(result);
+        }
+
         /// <summary>Submit then poll to completion. Used by the higher-level solve methods.</summary>
         public async Task<SolveResult> SolveAsync(
             IDictionary<string, object?> options,
@@ -672,6 +747,11 @@ namespace CapSkip
             if (method == "amazon_waf")
             {
                 return ApiParams.PrepareSubmitParams(parameters, "amazon_waf");
+            }
+
+            if (method == "datadome")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "datadome");
             }
 
             return ApiParams.ApplyProxy(ApiParams.ApplyParamAliases(parameters));

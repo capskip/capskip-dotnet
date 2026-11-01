@@ -5,6 +5,44 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-11-02
+
+### Added
+
+- **DataDome support** via `DataDomeAsync(captchaUrl, pageUrl, options)`, sent as
+  `method=datadome`, covering both DataDome challenges: the slider (`/captcha/`)
+  and the device check (`/interstitial/`). The order is 2Captcha's
+  `datadome(captcha_url, pageurl, userAgent, proxy)`: the challenge address and
+  the page URL positionally, with the optional `userAgent` and `proxy` in
+  `options`; `url` is accepted there for `pageurl` as on every other method.
+- The result carries the cookie twice: `Code` exactly as DataDome set it,
+  attributes included, and `SolveResult.Cookie`, the `datadome=...` pair alone
+  for a Cookie header. `UserAgent` is the User-Agent the cookie was earned with,
+  the one sent or CapSkip's own browser's.
+- `SolveResult.Proxy`: when a task is sent without a proxy and the CapSkip app
+  solves it through its own DataDome proxy list, the result names that proxy as
+  `host:port`. The cookie only works from that address, so it is reported
+  rather than dropped. Polled results now carry `Proxy` whenever the server
+  sends a non-empty `proxy` field.
+- Parameter aliases `captchaUrl` / `captchaURL` for `captcha_url`.
+- A `datadome` example (`dotnet run -- datadome`) that reads the block page,
+  builds the `captchaUrl` from its `var dd` object when there is no iframe, and
+  repeats the request with the cookie, User-Agent and proxy.
+
+### Notes
+
+- Refused locally with a `ValidationException`, before a round-trip: a
+  `captcha_url` that is not an https challenge address on captcha-delivery.com
+  under `/captcha/` or `/interstitial/` carrying `initialCid`, `hash` and `cid`;
+  a block page that bans the requesting address (`t=bv`); a `pageurl` that is
+  not http(s) or that points at captcha-delivery.com; and a `userAgent` that is
+  not stock Chrome for Windows. CapSkip itself checks that the Chrome major
+  version matches its browser and answers `ERROR_WRONG_USERAGENT` when it does
+  not. An optional sent as an empty string is treated as not sent.
+- An HTML-escaped (`&amp;`) iframe src is accepted and sent unchanged; CapSkip
+  decodes it.
+- DataDome uses `recaptchaTimeout`: the challenge is passed in a real browser.
+
 ## [1.4.0] - 2026-11-01
 
 ### Added

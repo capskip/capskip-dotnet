@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -86,6 +87,23 @@ namespace CapSkip.Tests
         public const string AmazonWafSolutionJson =
             "{\"captcha_voucher\":\"" + AmazonWafCaptchaVoucher + "\","
             + "\"existing_token\":\"" + AmazonWafExistingToken + "\"}";
+
+        /// <summary>
+        /// DataDome answers with a cookie, not a token: the Set-Cookie value exactly
+        /// as DataDome set it, attributes included. Next to it CapSkip names the
+        /// User-Agent the cookie was earned with (the caller's, or its own browser's
+        /// when the task sent none) and, only when the task sent no proxy and the
+        /// app's DataDome proxy list supplied one, that proxy as host:port.
+        /// </summary>
+        public const string DataDomeCookie =
+            "datadome=FAPPpli4jkT1MZGtgF8ez7mjSz8MrJ9fGRNE51Gj79cq9fXp5xn~F1P5APWjqvJojf4U9dq0R81Xaj2hpYtjle95mkg; "
+            + "Max-Age=31536000; Domain=.example.com; Path=/; Secure; SameSite=Lax";
+
+        public const string DataDomeBrowserUserAgent =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            + "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
+
+        public const string DataDomeListProxy = "203.0.113.10:8080";
 
         private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, string>> _submitted =
             new ConcurrentDictionary<string, IReadOnlyDictionary<string, string>>();
@@ -271,6 +289,43 @@ namespace CapSkip.Tests
                 else
                 {
                     Send(stream, $"OK|{AmazonWafSolutionJson}");
+                }
+            }
+            else if (_idType.TryGetValue(cid, out var ddType) && ddType == "datadome")
+            {
+                // As CapSkip answers: the cookie as `request`, the User-Agent it was
+                // earned with, and `proxy` only when the app's own list supplied one.
+                _submitted.TryGetValue(cid, out var sent);
+                string? sentUserAgent = null;
+                string? sentProxy = null;
+                if (sent != null)
+                {
+                    if (!sent.TryGetValue("userAgent", out sentUserAgent) || sentUserAgent.Length == 0)
+                    {
+                        sent.TryGetValue("useragent", out sentUserAgent);
+                    }
+
+                    sent.TryGetValue("proxy", out sentProxy);
+                }
+
+                if (wantJson)
+                {
+                    var reply = new Dictionary<string, object>
+                    {
+                        ["status"] = 1,
+                        ["request"] = DataDomeCookie,
+                        ["userAgent"] = string.IsNullOrEmpty(sentUserAgent) ? DataDomeBrowserUserAgent : sentUserAgent!,
+                    };
+                    if (string.IsNullOrEmpty(sentProxy))
+                    {
+                        reply["proxy"] = DataDomeListProxy;
+                    }
+
+                    Send(stream, JsonSerializer.Serialize(reply), "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{DataDomeCookie}");
                 }
             }
             else if (_idType.TryGetValue(cid, out var friendlyType) && friendlyType == "friendly_captcha")

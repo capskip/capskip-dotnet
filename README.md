@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://github.com/capskip/capskip-dotnet/actions/workflows/ci.yml/badge.svg)](https://github.com/capskip/capskip-dotnet/actions/workflows/ci.yml)
 
-**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF and image captchas from C#.**
+**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome and image captchas from C#.**
 
 Official .NET client for [CapSkip](https://capskip.com), a **local captcha solver** that runs on your own machine. Licensed once, not billed per solve.
 
@@ -21,7 +21,7 @@ Targets **.NET Standard 2.0**, so it runs on .NET 6/7/8/9+, .NET Core 2.0+, and 
 
 CapSkip is a desktop app. It does the solving on your machine and exposes the standard captcha-solver HTTP API — the same `in.php` / `res.php` endpoints every 2captcha-compatible client already speaks — on `127.0.0.1:8080`.
 
-This SDK is a thin wrapper over that API, with the method names you would expect: `NormalAsync()`, `RecaptchaAsync()`, `TurnstileAsync()`, `GeetestAsync()`, `AltchaAsync()`, `CapyAsync()`, `CaptchaFoxAsync()`, `FriendlyCaptchaAsync()`, `AmazonWafAsync()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
+This SDK is a thin wrapper over that API, with the method names you would expect: `NormalAsync()`, `RecaptchaAsync()`, `TurnstileAsync()`, `GeetestAsync()`, `AltchaAsync()`, `CapyAsync()`, `CaptchaFoxAsync()`, `FriendlyCaptchaAsync()`, `AmazonWafAsync()`, `DataDomeAsync()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
 
 ## Supported captcha types
 
@@ -41,6 +41,7 @@ This SDK is a thin wrapper over that API, with the method names you would expect
 | **CaptchaFox solver** (widget) | `solver.CaptchaFoxAsync(sitekey, url)` |
 | **Friendly Captcha solver** (proof-of-work) | `FriendlyCaptchaAsync(sitekey, url, new() { ["version"] = "v2" })` |
 | **AWS WAF solver** (challenge page or widget) | `solver.AmazonWafAsync(sitekey, url, options)` |
+| **DataDome solver** (slider and device check) | `solver.DataDomeAsync(captchaUrl, url)` |
 
 The options argument is a `Dictionary<string, object?>` — the table shortens it to `new() { ... }` to stay readable; full signatures are in the [API Reference](docs/API_REFERENCE.md).
 
@@ -129,7 +130,7 @@ var solver = new CapSkipClient(
     port: 8080,               // CapSkip port from app settings
     defaultTimeout: 120,      // seconds — image captcha polling timeout
     recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest / CaptchaFox /
-                              // Friendly Captcha / AWS WAF polling timeout
+                              // Friendly Captcha / AWS WAF / DataDome polling timeout
                               // (ALTCHA and Capy use defaultTimeout — neither is a browser solve)
     pollingInterval: 5);      // max seconds between res.php polls (starts at 0.25s, backs off to this)
 ```
@@ -361,6 +362,79 @@ script that is not an AWS WAF integration is never accepted. `challengeScript`,
 `captchaScript` and `jsapi_script` are accepted as aliases. Full parameters are
 in the [CapSkip API docs](https://capskip.com/api-docs/#aws-waf).
 
+### DataDome
+
+DataDome answers a request it doubts with a block page (status 403, sometimes
+401) instead of the site. CapSkip passes the challenge on that page, a slider
+or a device check, and returns the `datadome` cookie that lets your requests
+through. The arguments follow 2Captcha's `datadome(captcha_url, pageurl,
+userAgent, proxy)`: the challenge address and the page URL positionally, and
+the optional `userAgent` and `proxy` in the options dictionary.
+
+```csharp
+var result = await solver.DataDomeAsync(
+    "https://geo.captcha-delivery.com/captcha/?initialCid=...&hash=...&cid=...&t=fe&referer=...&s=45225&e=...&dm=cd",
+    "https://www.example.com/",                    // the page that returned the block page
+    new Dictionary<string, object?>
+    {
+        ["userAgent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      + "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+        ["proxy"] = new Proxy("HTTP", "login:password@203.0.113.10:8080"),
+    });
+
+result.Cookie;     // "datadome=..." -- send it as the Cookie header
+result.Code;       // the cookie exactly as DataDome set it: Max-Age, Domain, Path...
+result.UserAgent;  // the User-Agent the cookie was earned with
+result.Proxy;      // set only when CapSkip picked the proxy, see below
+```
+
+`captchaUrl` is the address of the challenge iframe on
+`geo.captcha-delivery.com`: `/captcha/` for a slider, `/interstitial/` for a
+device check. Take the iframe's `src` when the block page has one; most build it
+with a script instead, so assemble it from the page's `var dd={...}` object as
+the [API docs](https://capskip.com/api-docs/#datadome) show. Each block page is
+a fresh challenge, so submit it soon and fetch the page again for the next task.
+`captchaUrl` / `captchaURL` are accepted as option aliases of `captcha_url`.
+
+**The cookie belongs to one IP address and one browser.** DataDome refuses it
+from any other address, or with any other User-Agent, so:
+
+- **Send the User-Agent you will use**, or none. It must be Chrome for Windows,
+  with the same major version as the browser CapSkip solves with; anything else
+  (Firefox, Safari, Edge, mobile, macOS) would earn a cookie the site rejects,
+  so it is refused with a `ValidationException` before the request is sent, and
+  a different Chrome major is refused by CapSkip with `ERROR_WRONG_USERAGENT`.
+  Send none and CapSkip uses its own browser's: copy `result.UserAgent` into
+  your requests as it is.
+- **Solve from the address you will use the cookie from.** If your requests go
+  out through a proxy, pass that proxy with the task. If they come from the
+  machine running CapSkip, pass none.
+- **When CapSkip picks the proxy, it tells you which.** The CapSkip app has a
+  DataDome proxy list of its own (Settings, Captcha types, DataDome, Configure
+  Proxies). A task sent without a proxy is solved through that list, and the
+  result then carries `Proxy` as `host:port`: send the cookie through that
+  proxy, or it will be refused. A proxy you send always takes priority over
+  the list, and then `Proxy` stays `null`.
+
+```csharp
+var handler = new HttpClientHandler { UseCookies = false };
+if (result.Proxy != null)
+{
+    // The list's proxy, named without its login: add your credentials if it has one.
+    handler.Proxy = new WebProxy($"http://{result.Proxy}");
+}
+
+using var http = new HttpClient(handler);
+var request = new HttpRequestMessage(HttpMethod.Get, "https://www.example.com/");
+request.Headers.TryAddWithoutValidation("User-Agent", result.UserAgent);
+request.Headers.TryAddWithoutValidation("Cookie", result.Cookie);
+var page = await http.SendAsync(request);
+```
+
+A block page whose `dd` object carries `'t':'bv'` means DataDome has banned the
+address that fetched it; no solve from there can pass, so it is refused before
+the request is sent. Change the address and request the page again.
+
 ### With a proxy (every method except image captcha)
 
 ```csharp
@@ -436,7 +510,7 @@ public sealed class SolveResult
 {
     public string CaptchaId { get; }  // internal ID from CapSkip
     public string Code { get; }       // solution — text for image, token for reCAPTCHA/Turnstile
-    public string? UserAgent { get; } // Turnstile & CaptchaFox — the UA that minted the token
+    public string? UserAgent { get; } // Turnstile, CaptchaFox & DataDome — the UA that minted the token
     public string? Challenge { get; } // GeeTest only — geetest_challenge
     public string? Validate  { get; } // GeeTest only — geetest_validate
     public string? Seccode   { get; } // GeeTest only — geetest_seccode
@@ -448,6 +522,8 @@ public sealed class SolveResult
     public string? RespKey      { get; } // Capy only — empty; carries nothing
     public string? CaptchaVoucher { get; } // AWS WAF only — captcha_voucher
     public string? ExistingToken  { get; } // AWS WAF only — existing_token (pairs with the voucher)
+    public string? Cookie    { get; } // DataDome only — the datadome=... pair for a Cookie header
+    public string? Proxy     { get; } // DataDome — host:port when CapSkip picked the proxy
 }
 ```
 
@@ -482,7 +558,7 @@ catch (CapSkipError)          { /* any other CapSkip failure */ }
 
 ### How do I solve a captcha in C#?
 
-Install the CapSkip desktop app, `dotnet add package CapSkip`, then await the method that matches the widget — `RecaptchaAsync()`, `TurnstileAsync()`, `GeetestAsync()`, `AltchaAsync()`, `CapyAsync()`, `CaptchaFoxAsync()`, `FriendlyCaptchaAsync()`, `AmazonWafAsync()` or `NormalAsync()`. Each returns a `SolveResult` whose `Code` is the token, or the recognized text in the case of an image captcha.
+Install the CapSkip desktop app, `dotnet add package CapSkip`, then await the method that matches the widget — `RecaptchaAsync()`, `TurnstileAsync()`, `GeetestAsync()`, `AltchaAsync()`, `CapyAsync()`, `CaptchaFoxAsync()`, `FriendlyCaptchaAsync()`, `AmazonWafAsync()`, `DataDomeAsync()` or `NormalAsync()`. Each returns a `SolveResult` whose `Code` is the token (a cookie for DataDome), or the recognized text in the case of an image captcha.
 
 ### Is this a free captcha solver?
 
@@ -490,7 +566,7 @@ The SDK itself is MIT-licensed and free. Solving needs the CapSkip app, which is
 
 ### Which captchas can it solve?
 
-reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, and image/text captchas. Not hCaptcha, and not FunCaptcha/Arkose.
+reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, and image/text captchas. Not hCaptcha, and not FunCaptcha/Arkose.
 
 ### Does it work with Selenium and Playwright?
 

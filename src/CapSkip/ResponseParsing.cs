@@ -147,6 +147,19 @@ namespace CapSkip
                     result.UserAgent = userAgentText;
                 }
 
+                // DataDome names the proxy a task was solved through when the task
+                // sent none and CapSkip took one from its own DataDome proxy list.
+                // The cookie only works from that address, so it is reported
+                // rather than dropped.
+                if (dict.TryGetValue("proxy", out var proxy) && proxy != null)
+                {
+                    var proxyText = Convert.ToString(proxy, CultureInfo.InvariantCulture);
+                    if (!string.IsNullOrEmpty(proxyText))
+                    {
+                        result.Proxy = proxyText;
+                    }
+                }
+
                 // ALTCHA's createTask-shaped "solution" object, which no other
                 // captcha type sends. Its counter is the only field both ALTCHA
                 // generations report the same way, so take it here rather than
@@ -259,6 +272,40 @@ namespace CapSkip
             result.CaptchaVoucher = ObjectAnswerField(payload, "captcha_voucher") ?? result.CaptchaVoucher;
             result.ExistingToken = ObjectAnswerField(payload, "existing_token") ?? result.ExistingToken;
 
+            return result;
+        }
+
+        /// <summary>
+        /// Expose a DataDome cookie as <see cref="SolveResult.Cookie"/>, ready for a
+        /// <c>Cookie</c> header.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="SolveResult.Code"/> keeps the cookie exactly as DataDome set
+        /// it, attributes included
+        /// (<c>datadome=...; Max-Age=...; Domain=...; Path=/; Secure; SameSite=Lax</c>),
+        /// for a cookie jar. <see cref="SolveResult.Cookie"/> is the part before the
+        /// first semicolon, the <c>datadome=...</c> pair a request sends back.
+        /// <see cref="SolveResult.UserAgent"/> and, when CapSkip picked the proxy,
+        /// <see cref="SolveResult.Proxy"/> are carried through from the poll as
+        /// they are. An empty answer, or one that was an object rather than a
+        /// string (Code then holds its JSON), is left untouched.
+        /// </remarks>
+        internal static SolveResult ApplyDataDomeSolution(SolveResult result)
+        {
+            var code = result.Code;
+            if (string.IsNullOrEmpty(code))
+            {
+                return result;
+            }
+
+            var trimmed = code.TrimStart();
+            if (trimmed.StartsWith("{", StringComparison.Ordinal) || trimmed.StartsWith("[", StringComparison.Ordinal))
+            {
+                return result;
+            }
+
+            var semicolon = code.IndexOf(';');
+            result.Cookie = (semicolon < 0 ? code : code.Substring(0, semicolon)).Trim();
             return result;
         }
 

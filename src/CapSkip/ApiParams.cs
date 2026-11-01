@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -90,6 +91,39 @@ namespace CapSkip
         private static readonly Regex AmazonWafScriptDirectory =
             new Regex("^(/[A-Za-z0-9_-]+)+$", RegexOptions.CultureInvariant);
 
+        internal static readonly HashSet<string> DataDomeSubmit = new HashSet<string>
+        {
+            "method", "captcha_url", "pageurl", "useragent", "json", "proxy", "proxytype",
+        };
+
+        /// <summary>
+        /// Every DataDome challenge is served from this domain or a subdomain of it
+        /// (geo.captcha-delivery.com in practice). CapSkip refuses any other host.
+        /// </summary>
+        internal const string DataDomeChallengeDomain = "captcha-delivery.com";
+
+        /// <summary>
+        /// The two challenge pages: <c>/captcha/</c> draws the slider,
+        /// <c>/interstitial/</c> runs the device check. Any other path renders
+        /// nothing to solve.
+        /// </summary>
+        internal static readonly string[] DataDomeChallengePaths = { "/captcha", "/interstitial" };
+
+        /// <summary>A Chrome version as Chrome writes it in its User-Agent: four dotted numbers.</summary>
+        private static readonly Regex ChromeVersion =
+            new Regex(@"\bChrome/(\d+)\.\d+\.\d+\.\d+\b", RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// Chrome-derived browsers and non-desktop builds. A User-Agent carrying any
+        /// of these is not stock Windows Chrome, so a cookie earned under it would be
+        /// refused on replay; the server answers ERROR_WRONG_USERAGENT for each.
+        /// </summary>
+        private static readonly string[] NotStockWindowsChrome =
+        {
+            "Edg/", "EdgA/", "OPR/", "YaBrowser/", "SamsungBrowser/", "Vivaldi/",
+            "HeadlessChrome/", "CriOS/", "Mobile", "Android",
+        };
+
         /// <summary>
         /// CapSkip solves the puzzle family only. <c>avatar</c> is a different
         /// challenge behind a different endpoint; the server refuses it at submit
@@ -141,6 +175,11 @@ namespace CapSkip
                 new KeyValuePair<string, string>("challengeScript", "challenge_script"),
                 new KeyValuePair<string, string>("captchaScript", "captcha_script"),
                 new KeyValuePair<string, string>("jsapi_script", "jsapiScript"),
+
+                // DataDome: 2Captcha and the API document captcha_url; createTask-style
+                // callers arrive with captchaUrl.
+                new KeyValuePair<string, string>("captchaUrl", "captcha_url"),
+                new KeyValuePair<string, string>("captchaURL", "captcha_url"),
             };
 
         /// <summary>Map friendly parameter names (e.g. <c>url</c>) to their API names (<c>pageurl</c>).</summary>
@@ -253,6 +292,10 @@ namespace CapSkip
                     // pairing.
                     prepared = DropUnsetOrEmpty(prepared);
                     ValidateAmazonWafSubmit(prepared);
+                    break;
+                case "datadome":
+                    prepared = DropUnsetOrEmpty(prepared);
+                    ValidateDataDomeSubmit(prepared);
                     break;
             }
 
@@ -643,6 +686,170 @@ namespace CapSkip
             {
                 throw new ValidationException(
                     $"Unsupported parameters for Amazon WAF: {ReprList(unknown)}.");
+            }
+        }
+
+        private static bool IsDataDomeHost(string? host)
+        {
+            var lower = (host ?? string.Empty).ToLowerInvariant();
+            return lower == DataDomeChallengeDomain || lower.EndsWith("." + DataDomeChallengeDomain, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// The query of a DataDome challenge URL, or <see langword="null"/> if it is
+        /// not one.
+        /// </summary>
+        /// <remarks>
+        /// Mirrors the server: an https URL on captcha-delivery.com (or a
+        /// subdomain), path <c>/captcha/</c> or <c>/interstitial/</c>, carrying
+        /// <c>initialCid</c>, <c>hash</c> and <c>cid</c>. An iframe src copied
+        /// HTML-escaped (<c>&amp;amp;</c>) and a scheme-relative <c>//geo...</c> URL
+        /// are both read the way the server reads them.
+        /// </remarks>
+        internal static Dictionary<string, string>? ParseDataDomeCaptchaUrl(object? value)
+        {
+            var text = WebUtility.HtmlDecode(
+                (Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty).Trim());
+            if (text.StartsWith("//", StringComparison.Ordinal))
+            {
+                text = "https:" + text;
+            }
+
+            if (!text.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                || !Uri.TryCreate(text, UriKind.Absolute, out var uri)
+                || uri.Scheme != Uri.UriSchemeHttps
+                || !IsDataDomeHost(uri.Host))
+            {
+                return null;
+            }
+
+            var path = Uri.UnescapeDataString(uri.AbsolutePath).TrimEnd('/');
+            if (!DataDomeChallengePaths.Any(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase)))
+            {
+                return null;
+            }
+
+            // Read the query off the text itself rather than Uri.Query, so it is
+            // decoded exactly once, as a form-encoded query string.
+            var queryText = string.Empty;
+            var hash = text.IndexOf('#');
+            var withoutFragment = hash < 0 ? text : text.Substring(0, hash);
+            var question = withoutFragment.IndexOf('?');
+            if (question >= 0)
+            {
+                queryText = withoutFragment.Substring(question + 1);
+            }
+
+            var query = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var pair in queryText.Split('&'))
+            {
+                if (pair.Length == 0)
+                {
+                    continue;
+                }
+
+                var equals = pair.IndexOf('=');
+                var name = WebUtility.UrlDecode(equals < 0 ? pair : pair.Substring(0, equals));
+                var item = equals < 0 ? string.Empty : WebUtility.UrlDecode(pair.Substring(equals + 1));
+
+                // Blank values count as absent, and the first occurrence wins.
+                if (item.Length > 0 && !query.ContainsKey(name))
+                {
+                    query[name] = item;
+                }
+            }
+
+            foreach (var key in new[] { "initialCid", "hash", "cid" })
+            {
+                if (!query.ContainsKey(key))
+                {
+                    return null;
+                }
+            }
+
+            return query;
+        }
+
+        /// <summary>
+        /// True for a stock Chrome-for-Windows User-Agent, the only kind CapSkip
+        /// takes on a DataDome task.
+        /// </summary>
+        /// <remarks>
+        /// DataDome ties the cookie to the browser that earned it, and CapSkip
+        /// solves in Chrome on Windows, so a cookie for any other User-Agent would
+        /// be refused on replay. The server also requires the same Chrome major
+        /// version as its own browser; that part can only be checked there.
+        /// </remarks>
+        internal static bool IsDataDomeUserAgent(object? value)
+        {
+            var ua = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+            return ua.IndexOf("Windows NT ", StringComparison.Ordinal) >= 0
+                && ChromeVersion.IsMatch(ua)
+                && !NotStockWindowsChrome.Any(token => ua.IndexOf(token, StringComparison.Ordinal) >= 0);
+        }
+
+        private static void ValidateDataDomeSubmit(IDictionary<string, object?> parameters)
+        {
+            // Without captcha_url the server answers ERROR_BAD_PARAMETERS and without
+            // pageurl ERROR_PAGEURL. Fail locally so a missing value costs no round-trip.
+            foreach (var key in new[] { "captcha_url", "pageurl" })
+            {
+                if (!parameters.TryGetValue(key, out var value) || !IsTruthy(value))
+                {
+                    throw new ValidationException($"'{key}' is required for DataDome.");
+                }
+            }
+
+            var query = ParseDataDomeCaptchaUrl(parameters["captcha_url"]);
+            if (query is null)
+            {
+                throw new ValidationException(
+                    "'captcha_url' must be the https address of a DataDome challenge on "
+                    + "captcha-delivery.com, under /captcha/ or /interstitial/ and carrying "
+                    + $"initialCid, hash and cid, got '{parameters["captcha_url"]}'. Take it from "
+                    + "the block page's iframe src, or build it from the page's `var dd` object.");
+            }
+
+            // t=bv is DataDome saying the address that fetched the block page is
+            // banned. Nothing sent from it can pass, and the server refuses the task
+            // with ERROR_PROXY_BANNED, so say so before the round-trip.
+            if (query.TryGetValue("t", out var t) && t == "bv")
+            {
+                throw new ValidationException(
+                    "This DataDome block page bans the IP address that requested it "
+                    + "(t=bv), so no solve from that address can pass. Change the address "
+                    + "(proxy), request the page again and submit the new captcha_url.");
+            }
+
+            var pageurl = (Convert.ToString(parameters["pageurl"], CultureInfo.InvariantCulture) ?? string.Empty)
+                .Trim();
+            if (pageurl.IndexOf("://", StringComparison.Ordinal) < 0
+                || !Uri.TryCreate(pageurl, UriKind.Absolute, out var pageUri)
+                || (pageUri.Scheme != Uri.UriSchemeHttp && pageUri.Scheme != Uri.UriSchemeHttps)
+                || string.IsNullOrEmpty(pageUri.Host)
+                || IsDataDomeHost(pageUri.Host))
+            {
+                throw new ValidationException(
+                    "'pageurl' must be the full http or https URL of the page that "
+                    + $"returned the DataDome block page, got '{pageurl}'.");
+            }
+
+            if (parameters.TryGetValue("useragent", out var userAgent) && IsTruthy(userAgent)
+                && !IsDataDomeUserAgent(userAgent))
+            {
+                throw new ValidationException(
+                    "DataDome 'userAgent' must be a stock Chrome for Windows User-Agent "
+                    + "with the same major version as the browser CapSkip solves with, got "
+                    + $"'{userAgent}'. The cookie only works with the User-Agent that "
+                    + "earned it. Leave it out and CapSkip uses its own browser's, which "
+                    + "the result reports as UserAgent.");
+            }
+
+            var unknown = UnknownKeys(parameters, DataDomeSubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for DataDome: {ReprList(unknown)}.");
             }
         }
 

@@ -5,8 +5,9 @@ namespace CapSkip
     /// CapSkip SDKs return (<c>captchaId</c>, <c>code</c>, for Turnstile
     /// <c>userAgent</c>, for GeeTest <c>challenge</c>/<c>validate</c>/<c>seccode</c>, and for
     /// ALTCHA <c>token</c>/<c>number</c>, for Capy
-    /// <c>captchakey</c>/<c>challengekey</c>/<c>answer</c>, and for AWS WAF
-    /// <c>captcha_voucher</c>/<c>existing_token</c>).
+    /// <c>captchakey</c>/<c>challengekey</c>/<c>answer</c>, for AWS WAF
+    /// <c>captcha_voucher</c>/<c>existing_token</c>, and for DataDome
+    /// <c>cookie</c>/<c>userAgent</c>/<c>proxy</c>).
     /// </summary>
     public sealed class SolveResult
     {
@@ -25,7 +26,10 @@ namespace CapSkip
         /// Turnstile and CaptchaFox — the User-Agent to send when submitting the
         /// token. For CaptchaFox this is the browser's own, not one you sent, and it
         /// stays <see langword="null"/> when the solve captured none rather than
-        /// being guessed. <see langword="null"/> for other captcha types.
+        /// being guessed. For DataDome, the User-Agent the cookie was earned with
+        /// (yours, or CapSkip's browser's when you sent none): send it with every
+        /// request that carries the cookie. <see langword="null"/> for other
+        /// captcha types.
         /// </summary>
         public string? UserAgent { get; set; }
 
@@ -101,9 +105,35 @@ namespace CapSkip
         /// </summary>
         public string? ExistingToken { get; set; }
 
+        /// <summary>
+        /// DataDome only — the <c>datadome=...</c> pair alone, the part of
+        /// <see cref="Code"/> before the first semicolon, ready for a <c>Cookie</c>
+        /// request header. <see cref="Code"/> keeps the cookie exactly as DataDome
+        /// set it, attributes included, for a cookie jar. Send it with
+        /// <see cref="UserAgent"/>, from the same IP address that earned it.
+        /// <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? Cookie { get; set; }
+
+        /// <summary>
+        /// DataDome — the proxy the task was solved through, as <c>host:port</c>,
+        /// present only when the task sent no proxy and the CapSkip app solved
+        /// through its own DataDome proxy list. The cookie works only through that
+        /// proxy. <see langword="null"/> otherwise, and for other captcha types.
+        /// </summary>
+        public string? Proxy { get; set; }
+
         /// <summary>A compact, human-readable representation for logging.</summary>
         public override string ToString()
         {
+            if (Cookie != null)
+            {
+                return Proxy is null
+                    ? $"SolveResult {{ CaptchaId = {CaptchaId}, Cookie = {Cookie}, UserAgent = {UserAgent} }}"
+                    : $"SolveResult {{ CaptchaId = {CaptchaId}, Cookie = {Cookie}, UserAgent = {UserAgent}, "
+                        + $"Proxy = {Proxy} }}";
+            }
+
             if (CaptchaVoucher != null)
             {
                 return $"SolveResult {{ CaptchaId = {CaptchaId}, CaptchaVoucher = {CaptchaVoucher}, "
