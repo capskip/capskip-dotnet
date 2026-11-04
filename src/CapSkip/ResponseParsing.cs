@@ -160,6 +160,13 @@ namespace CapSkip
                     }
                 }
 
+                // hCaptcha hands the widget a second value next to the token. It is
+                // carried even when empty, which is how the server reports "none".
+                if (dict.TryGetValue("respKey", out var respKey) && respKey is string respKeyText)
+                {
+                    result.RespKey = respKeyText;
+                }
+
                 // ALTCHA's createTask-shaped "solution" object, which no other
                 // captcha type sends. Its counter is the only field both ALTCHA
                 // generations report the same way, so take it here rather than
@@ -348,6 +355,24 @@ namespace CapSkip
         internal static SolveResult ApplyTokenSolution(SolveResult result)
         {
             result.Token = result.Code ?? string.Empty;
+            return result;
+        }
+
+        /// <summary>
+        /// Expose the hCaptcha token as <see cref="SolveResult.Token"/>, next to its
+        /// <see cref="SolveResult.RespKey"/>.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="SolveResult.Code"/> keeps the token as the server sent it and
+        /// <see cref="SolveResult.Token"/> is the same string, for the
+        /// <c>h-captcha-response</c> field. <see cref="SolveResult.RespKey"/> is never
+        /// <see langword="null"/> here, empty when the widget handed out none, so
+        /// callers can read it without a null check.
+        /// </remarks>
+        internal static SolveResult ApplyHCaptchaSolution(SolveResult result)
+        {
+            ApplyTokenSolution(result);
+            result.RespKey ??= string.Empty;
             return result;
         }
 

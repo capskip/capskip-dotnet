@@ -568,5 +568,87 @@ namespace CapSkip.Tests
             await Assert.ThrowsAsync<ValidationException>(
                 () => solver.DataDomeAsync(DdCaptchaUrl.Replace("t=fe", "t=bv"), DdPage));
         }
+
+        // -- hCaptcha ----------------------------------------------------------
+
+        private const string HcSiteKey = "a5f74b19-9e45-40e0-b45d-47ff91b7a6c2";
+        private const string HcPage = "https://accounts.hcaptcha.com/demo";
+
+        [Fact]
+        public async Task HCaptcha()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.HCaptchaAsync(HcSiteKey, HcPage);
+
+            Assert.False(string.IsNullOrEmpty(result.CaptchaId));
+            Assert.Equal(MockServer.HCaptchaToken, result.Code);
+            Assert.Equal(MockServer.HCaptchaToken, result.Token);
+            Assert.Equal(MockServer.HCaptchaRespKey, result.RespKey);
+            Assert.Equal(MockServer.HCaptchaUserAgent, result.UserAgent);
+        }
+
+        /// <summary>
+        /// invisible=true has to cross the wire as 1: the mock, like CapSkip, refuses
+        /// anything else. rqdata carries + and /, and the proxy password %40; all
+        /// must survive the form encoding.
+        /// </summary>
+        [Fact]
+        public async Task HCaptchaWithEveryOption()
+        {
+            const string rqdata = "Wk2qT7bX+fV9rL0pZ3mN8cJ1hYsD6uE4gA5oR2iK/0=";
+            var solver = MakeSolver();
+
+            var result = await solver.HCaptchaAsync(HcSiteKey, HcPage, new Dictionary<string, object?>
+            {
+                ["invisible"] = true,
+                ["data"] = rqdata,
+                ["userAgent"] = "Mozilla/5.0 (caller)",
+                ["proxy"] = new Proxy("SOCKS5H", "login:p%40ss@203.0.113.7:1080"),
+            });
+
+            Assert.Equal(MockServer.HCaptchaToken, result.Token);
+            Assert.Equal(MockServer.HCaptchaRespKey, result.RespKey);
+
+            var sent = _server.Submitted(result.CaptchaId);
+            Assert.Equal("1", sent["invisible"]);
+            Assert.Equal(rqdata, sent["data"]);
+            Assert.Equal("Mozilla/5.0 (caller)", sent["useragent"]);
+            Assert.Equal("login:p%40ss@203.0.113.7:1080", sent["proxy"]);
+            Assert.Equal("SOCKS5H", sent["proxytype"]);
+        }
+
+        [Fact]
+        public async Task HCaptchaTypedInvisibleOverload()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.HCaptchaAsync(HcSiteKey, HcPage, invisible: true);
+
+            Assert.Equal(MockServer.HCaptchaToken, result.Token);
+            Assert.Equal("1", _server.Submitted(result.CaptchaId)["invisible"]);
+        }
+
+        [Fact]
+        public async Task HCaptchaBadPageUrlIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => solver.HCaptchaAsync(HcSiteKey, "accounts.hcaptcha.com/demo"));
+        }
+
+        [Fact]
+        public async Task HCaptchaThroughTheAsyncAlias()
+        {
+            var solver = new AsyncCapSkip(host: _server.Host, port: _server.Port, pollingInterval: 1);
+
+            var result = await solver.HCaptchaAsync(
+                HcSiteKey, HcPage, new Dictionary<string, object?> { ["invisible"] = 1 });
+
+            Assert.Equal(MockServer.HCaptchaToken, result.Token);
+            Assert.Equal(MockServer.HCaptchaRespKey, result.RespKey);
+            Assert.Equal(MockServer.HCaptchaUserAgent, result.UserAgent);
+        }
     }
 }

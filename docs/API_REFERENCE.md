@@ -28,6 +28,7 @@ The SDK only supports the captcha types documented by CapSkip.
 | Friendly Captcha (proof-of-work) | `FriendlyCaptchaAsync()` | `friendly_captcha` |
 | AWS WAF (challenge page or widget) | `AmazonWafAsync()` | `amazon_waf` |
 | DataDome (slider and device check) | `DataDomeAsync()` | `datadome` |
+| hCaptcha (checkbox, invisible, Enterprise) | `HCaptchaAsync()` | `hcaptcha` |
 
 **Proxy** is supported for every method except image
 captcha. For ALTCHA the proxy is used only for the `challenge_url` fetch.
@@ -54,7 +55,7 @@ var solver = new CapSkipClient(
 | `host` | `string` | `"127.0.0.1"` | CapSkip host |
 | `port` | `int` | `8080` | CapSkip port |
 | `defaultTimeout` | `double` | `120` | Seconds to poll an image captcha |
-| `recaptchaTimeout` | `double` | `300` | Seconds to poll the browser-backed solves (reCAPTCHA, Turnstile, GeeTest, CaptchaFox, Friendly Captcha, AWS WAF, DataDome) |
+| `recaptchaTimeout` | `double` | `300` | Seconds to poll the browser-backed solves (reCAPTCHA, Turnstile, GeeTest, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha) |
 | `pollingInterval` | `double` | `5` | Max seconds between polls (starts at 0.25s, backs off to this) |
 
 `AsyncCapSkip` is a subclass alias of `CapSkipClient`, provided for parity with the
@@ -865,6 +866,83 @@ Uses `recaptchaTimeout`: the challenge is passed in a real browser.
 
 ---
 
+## 12. hCaptcha — `HCaptchaAsync(sitekey, url, options?)`
+
+hCaptcha is the checkbox widget behind many sign-up, login and checkout forms.
+CapSkip passes the widget for the sitekey and page you send and returns the
+token, ready to submit with the form. Invisible widgets and hCaptcha Enterprise
+use the same method. Public docs: <https://capskip.com/api-docs/#hcaptcha>.
+
+The arguments follow 2Captcha's `hcaptcha(sitekey, url, ...)`, so code written
+against it keeps working. `pageurl` is accepted in the options for `url`. A
+typed overload, `HCaptchaAsync(sitekey, url, bool invisible, options?)`, takes
+`invisible` as a bool.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `hcaptcha` |
+| `sitekey` | string | Yes | The widget's sitekey (`data-sitekey`) |
+| `pageurl` | string | Yes | Full http or https URL of the page the widget is on |
+| `invisible` | int | No | `1` for an invisible widget (`data-size="invisible"`). The SDK takes `true`/`false`, `1`/`0` or `"1"`/`"0"`/`"true"`/`"false"`, sends `1`, and leaves it out when off |
+| `data` | string | No | hCaptcha Enterprise: the `rqdata` value the page passes to `hcaptcha.setData()`. Single use; fetch a fresh one per task |
+| `userAgent` | string | No | The User-Agent you will submit the form with. Used only when it matches CapSkip's browser. Sent as `useragent` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | `HTTP`, `HTTPS`, `SOCKS5` or `SOCKS5H` |
+
+Refused locally with `ValidationException`, as CapSkip would refuse them: a
+missing sitekey (`ERROR_RECAPTCHA_INVALID_SITEKEY`), a `pageurl` that is missing
+or not an absolute http(s) address (`ERROR_PAGEURL`), an `invisible` value other
+than 0/1/true/false, and any parameter not in the table, 2Captcha's `domain`
+among them.
+
+### GET `/res.php`
+
+The SDK polls with `json=1`, where CapSkip returns the token in `request` with
+`respKey` and the User-Agent the token was earned with:
+
+```json
+{
+  "status": 1,
+  "request": "P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.hadwYXNza2V5xQZ2...f3Kq8nV2",
+  "respKey": "E0_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6IjA0...9wB1",
+  "useragent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+}
+```
+
+(In plain-text mode the User-Agent arrives in the `X-HCaptcha-User-Agent`
+response header.) A task that hCaptcha refused the sitekey for fails with
+`ERROR_RECAPTCHA_INVALID_SITEKEY`, one whose proxy could not be reached with
+`ERROR_PROXY_CONNECT_REFUSED`; resubmitting the same task would fail again.
+
+### SDK usage
+
+```csharp
+var result = await solver.HCaptchaAsync("a5f74b19-9e45-40e0-b45d-47ff91b7a6c2",
+    "https://accounts.hcaptcha.com/demo");
+
+// Invisible Enterprise widget, through a proxy
+var result = await solver.HCaptchaAsync(sitekey, pageUrl, invisible: true,
+    new Dictionary<string, object?>
+    {
+        ["data"] = rqdata,
+        ["proxy"] = new Proxy("HTTP", "login:password@203.0.113.10:8080"),
+    });
+
+form["h-captcha-response"] = result.Token;
+form["g-recaptcha-response"] = result.Token;   // if the form has one
+request.Headers.TryAddWithoutValidation("User-Agent", result.UserAgent);
+```
+
+Tokens are single use and expire about two minutes after they are issued.
+
+Uses `recaptchaTimeout`: the widget is passed in a real browser.
+
+---
+
 ## Return value
 
 Every solve method returns a `SolveResult`:
@@ -874,16 +952,16 @@ public sealed class SolveResult
 {
     public string CaptchaId { get; }
     public string Code { get; }
-    public string? UserAgent { get; }    // Turnstile, CaptchaFox & DataDome, when the poll includes it
+    public string? UserAgent { get; }    // Turnstile, CaptchaFox, DataDome & hCaptcha, when the poll includes it
     public string? Challenge { get; }    // GeeTest
     public string? Validate { get; }     // GeeTest
     public string? Seccode { get; }      // GeeTest
-    public string? Token { get; }        // ALTCHA, CaptchaFox, Friendly Captcha
+    public string? Token { get; }        // ALTCHA, CaptchaFox, Friendly Captcha, hCaptcha
     public long? Number { get; }         // ALTCHA
     public string? CaptchaKey { get; }   // Capy — capy_captchakey
     public string? ChallengeKey { get; } // Capy — capy_challengekey
     public string? Answer { get; }       // Capy — capy_answer (the drag path)
-    public string? RespKey { get; }      // Capy — empty; carries nothing
+    public string? RespKey { get; }      // hCaptcha — never null, "" when none; Capy — empty
     public string? CaptchaVoucher { get; } // AWS WAF — captcha_voucher
     public string? ExistingToken { get; }  // AWS WAF — existing_token
     public string? Cookie { get; }       // DataDome — the datadome=... pair
@@ -918,6 +996,19 @@ only when the task sent no proxy and CapSkip used its own DataDome proxy list
 // result.Cookie     "datadome=FAPPpli4..."
 // result.UserAgent  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
 // result.Proxy      "203.0.113.10:8080"
+```
+
+hCaptcha sets `Token`, the same string as `Code`, plus `RespKey` and the
+User-Agent the token was earned with. `RespKey` is never `null` on an hCaptcha
+result, and empty when the widget handed out none (it is carried from any poll
+reply that includes one):
+
+```csharp
+// result.CaptchaId  "12345"
+// result.Code       "P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+// result.Token      "P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+// result.RespKey    "E0_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+// result.UserAgent  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ..."
 ```
 
 ---

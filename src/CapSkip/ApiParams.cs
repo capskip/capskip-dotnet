@@ -91,6 +91,12 @@ namespace CapSkip
         private static readonly Regex AmazonWafScriptDirectory =
             new Regex("^(/[A-Za-z0-9_-]+)+$", RegexOptions.CultureInvariant);
 
+        internal static readonly HashSet<string> HCaptchaSubmit = new HashSet<string>
+        {
+            "method", "sitekey", "pageurl", "invisible", "data", "useragent", "json",
+            "proxy", "proxytype",
+        };
+
         internal static readonly HashSet<string> DataDomeSubmit = new HashSet<string>
         {
             "method", "captcha_url", "pageurl", "useragent", "json", "proxy", "proxytype",
@@ -296,6 +302,10 @@ namespace CapSkip
                 case "datadome":
                     prepared = DropUnsetOrEmpty(prepared);
                     ValidateDataDomeSubmit(prepared);
+                    break;
+                case "hcaptcha":
+                    prepared = NormalizeHCaptchaSubmit(prepared);
+                    ValidateHCaptchaSubmit(prepared);
                     break;
             }
 
@@ -850,6 +860,115 @@ namespace CapSkip
             {
                 throw new ValidationException(
                     $"Unsupported parameters for DataDome: {ReprList(unknown)}.");
+            }
+        }
+
+        /// <summary>
+        /// Read an hCaptcha <c>invisible</c> value: <see langword="true"/> for on,
+        /// <see langword="false"/> for off, <see langword="null"/> for anything else.
+        /// </summary>
+        /// <remarks>
+        /// Accepts a bool, the integers 1 and 0, and the strings <c>"1"</c>,
+        /// <c>"0"</c>, <c>"true"</c> and <c>"false"</c> in any case. The server reads
+        /// only <c>"1"</c> or <c>"true"</c> as invisible, so anything else would
+        /// silently mean a visible widget.
+        /// </remarks>
+        internal static bool? ParseHCaptchaInvisible(object? value)
+        {
+            switch (value)
+            {
+                case bool b:
+                    return b;
+                case sbyte _:
+                case byte _:
+                case short _:
+                case ushort _:
+                case int _:
+                case uint _:
+                case long _:
+                case ulong _:
+                    var number = Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+                    return number == 1 ? true : number == 0 ? false : (bool?)null;
+                case string s:
+                    switch (s.ToLowerInvariant())
+                    {
+                        case "1":
+                        case "true":
+                            return true;
+                        case "0":
+                        case "false":
+                            return false;
+                        default:
+                            return null;
+                    }
+
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// Drop unset and empty optionals, and send <c>invisible</c> as the
+        /// <c>1</c> the server reads. Off is the server's default, so it is not
+        /// sent at all.
+        /// </summary>
+        private static Dictionary<string, object?> NormalizeHCaptchaSubmit(IDictionary<string, object?> parameters)
+        {
+            var prepared = DropUnsetOrEmpty(parameters);
+            if (prepared.TryGetValue("invisible", out var raw))
+            {
+                var invisible = ParseHCaptchaInvisible(raw);
+                if (invisible is null)
+                {
+                    throw new ValidationException(
+                        $"invisible must be 0 or 1 (or a bool) for hCaptcha, not '{raw}'.");
+                }
+
+                if (invisible.Value)
+                {
+                    prepared["invisible"] = 1;
+                }
+                else
+                {
+                    prepared.Remove("invisible");
+                }
+            }
+
+            return prepared;
+        }
+
+        private static void ValidateHCaptchaSubmit(IDictionary<string, object?> parameters)
+        {
+            // The server answers ERROR_RECAPTCHA_INVALID_SITEKEY for a missing sitekey
+            // and ERROR_PAGEURL for a page URL that is missing or not http(s). Fail
+            // locally so neither costs a round-trip.
+            parameters.TryGetValue("sitekey", out var sitekey);
+            if ((Convert.ToString(sitekey, CultureInfo.InvariantCulture) ?? string.Empty).Trim().Length == 0)
+            {
+                throw new ValidationException("'sitekey' is required for hCaptcha.");
+            }
+
+            parameters.TryGetValue("pageurl", out var pageurlValue);
+            var pageurl = (Convert.ToString(pageurlValue, CultureInfo.InvariantCulture) ?? string.Empty).Trim();
+            if (pageurl.Length == 0)
+            {
+                throw new ValidationException("'pageurl' is required for hCaptcha.");
+            }
+
+            if (pageurl.IndexOf("://", StringComparison.Ordinal) < 0
+                || !Uri.TryCreate(pageurl, UriKind.Absolute, out var pageUri)
+                || (pageUri.Scheme != Uri.UriSchemeHttp && pageUri.Scheme != Uri.UriSchemeHttps)
+                || string.IsNullOrEmpty(pageUri.Host))
+            {
+                throw new ValidationException(
+                    $"'pageurl' must be an absolute http or https URL for hCaptcha, got '{pageurl}'.");
+            }
+
+            var unknown = UnknownKeys(parameters, HCaptchaSubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for hCaptcha: {ReprList(unknown)}.");
             }
         }
 

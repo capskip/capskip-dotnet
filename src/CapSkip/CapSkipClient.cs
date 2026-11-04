@@ -11,7 +11,7 @@ namespace CapSkip
     /// <summary>
     /// Client for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3,
     /// Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly
-    /// Captcha, AWS WAF and DataDome). Every solve method is asynchronous and returns a
+    /// Captcha, AWS WAF, DataDome and hCaptcha). Every solve method is asynchronous and returns a
     /// <see cref="SolveResult"/>.
     /// </summary>
     public class CapSkipClient
@@ -23,7 +23,7 @@ namespace CapSkip
         internal const double InitialPollingInterval = 0.25;
 
         /// <summary>The installed SDK version.</summary>
-        public static readonly string Version = "1.5.0";
+        public static readonly string Version = "1.6.0";
 
         /// <summary>CapSkip API key sent with every request.</summary>
         public string ApiKey { get; }
@@ -562,6 +562,111 @@ namespace CapSkip
             return ResponseParsing.ApplyDataDomeSolution(result);
         }
 
+        /// <summary>Solve an hCaptcha widget and return its token.</summary>
+        /// <param name="sitekey">
+        /// The widget's <c>data-sitekey</c> (or the <c>sitekey</c> option of
+        /// <c>hcaptcha.render()</c>).
+        /// </param>
+        /// <param name="url">Full http or https URL of the page the widget is on.</param>
+        /// <param name="options">
+        /// Optional <c>invisible</c>: <see langword="true"/> (or <c>1</c>) for a
+        /// <c>data-size="invisible"</c> widget. Optional <c>data</c>: the
+        /// <c>rqdata</c> value an hCaptcha Enterprise site passes to
+        /// <c>hcaptcha.setData()</c>; it is single use and expires quickly, so fetch
+        /// a fresh one for every task. Optional <c>userAgent</c>: the User-Agent you
+        /// will submit the form with; CapSkip uses it only when it matches the
+        /// browser it solves with. Optional <c>proxy</c>, as a URI string (HTTP), a
+        /// <see cref="CapSkip.Proxy"/>, or
+        /// <c>{ ["type"] = "HTTP", ["uri"] = "login:password@IP:PORT" }</c>.
+        /// <c>pageurl</c> is accepted in place of <paramref name="url"/>, and
+        /// <c>useragent</c> / <c>user_agent</c> in place of <c>userAgent</c>.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result whose <see cref="SolveResult.Token"/> goes into the form's
+        /// <c>h-captcha-response</c> (and <c>g-recaptcha-response</c>) field, with
+        /// the same string in <see cref="SolveResult.Code"/>; the second value
+        /// hCaptcha hands the widget in <see cref="SolveResult.RespKey"/> (never
+        /// <see langword="null"/>; empty when the widget handed out none, and most
+        /// sites never read it); and the User-Agent the token was earned with in
+        /// <see cref="SolveResult.UserAgent"/>.
+        /// </returns>
+        /// <remarks>
+        /// hCaptcha Enterprise and invisible widgets use this same method. Submit the
+        /// token with <see cref="SolveResult.UserAgent"/>, and soon: hCaptcha tokens
+        /// are single use and expire about two minutes after they are issued.
+        /// </remarks>
+        public async Task<SolveResult> HCaptchaAsync(
+            string sitekey,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // A real browser session, like reCAPTCHA, so it gets the longer of the
+            // two timeouts unless the caller asked for a specific one.
+            var pars = new Dictionary<string, object?>
+            {
+                ["timeout"] = RecaptchaTimeout,
+                ["sitekey"] = sitekey,
+            };
+
+            // Left out when null, so pageurl in options can stand in for it without
+            // tripping the alias conflict check.
+            if (url != null)
+            {
+                pars["url"] = url;
+            }
+
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "hcaptcha";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyHCaptchaSolution(result);
+        }
+
+        /// <summary>Solve an hCaptcha widget, saying whether it is invisible.</summary>
+        /// <param name="sitekey">The widget's <c>data-sitekey</c>.</param>
+        /// <param name="url">Full http or https URL of the page the widget is on.</param>
+        /// <param name="invisible">
+        /// <see langword="true"/> for a <c>data-size="invisible"</c> widget. Sent as
+        /// <c>invisible=1</c>; <see langword="false"/> sends nothing, the server's default.
+        /// </param>
+        /// <param name="options">
+        /// The other options of
+        /// <see cref="HCaptchaAsync(string, string, IDictionary{string, object}, CancellationToken)"/>
+        /// (<c>data</c>, <c>userAgent</c>, <c>proxy</c>, <c>timeout</c>). An
+        /// <c>invisible</c> entry here that disagrees with
+        /// <paramref name="invisible"/> is refused.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        public Task<SolveResult> HCaptchaAsync(
+            string sitekey,
+            string url,
+            bool invisible,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            var opts = Clone(options);
+            if (opts.TryGetValue("invisible", out var other) && other != null
+                && ApiParams.ParseHCaptchaInvisible(other) != invisible)
+            {
+                throw new ValidationException(
+                    $"Conflicting parameters: invisible={(invisible ? "true" : "false")} and "
+                    + $"options['invisible']='{other}'");
+            }
+
+            opts["invisible"] = invisible;
+            return HCaptchaAsync(sitekey, url, opts, cancellationToken);
+        }
+
         /// <summary>Submit then poll to completion. Used by the higher-level solve methods.</summary>
         public async Task<SolveResult> SolveAsync(
             IDictionary<string, object?> options,
@@ -752,6 +857,11 @@ namespace CapSkip
             if (method == "datadome")
             {
                 return ApiParams.PrepareSubmitParams(parameters, "datadome");
+            }
+
+            if (method == "hcaptcha")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "hcaptcha");
             }
 
             return ApiParams.ApplyProxy(ApiParams.ApplyParamAliases(parameters));

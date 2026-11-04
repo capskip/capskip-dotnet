@@ -105,6 +105,19 @@ namespace CapSkip.Tests
 
         public const string DataDomeListProxy = "203.0.113.10:8080";
 
+        /// <summary>
+        /// hCaptcha, as CapSkip's res.php answers it with json=1: the token as
+        /// <c>request</c>, the widget's respKey, and the UA of the browser that
+        /// earned it — never the caller's own, so a test can tell the two apart.
+        /// </summary>
+        public const string HCaptchaToken = "P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.hadwYXNza2V5xQZ2f3Kq8nV2";
+
+        public const string HCaptchaRespKey = "E0_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6IjA09wB1";
+
+        public const string HCaptchaUserAgent =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            + "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
+
         private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, string>> _submitted =
             new ConcurrentDictionary<string, IReadOnlyDictionary<string, string>>();
 
@@ -328,6 +341,25 @@ namespace CapSkip.Tests
                     Send(stream, $"OK|{DataDomeCookie}");
                 }
             }
+            else if (_idType.TryGetValue(cid, out var hcType) && hcType == "hcaptcha")
+            {
+                // Plain text carries the UA in X-HCaptcha-User-Agent instead.
+                if (wantJson)
+                {
+                    var reply = new Dictionary<string, object>
+                    {
+                        ["status"] = 1,
+                        ["request"] = HCaptchaToken,
+                        ["respKey"] = HCaptchaRespKey,
+                        ["useragent"] = HCaptchaUserAgent,
+                    };
+                    Send(stream, JsonSerializer.Serialize(reply), "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{HCaptchaToken}");
+                }
+            }
             else if (_idType.TryGetValue(cid, out var friendlyType) && friendlyType == "friendly_captcha")
             {
                 if (wantJson)
@@ -375,6 +407,16 @@ namespace CapSkip.Tests
             if (key == "badkey")
             {
                 Send(stream, "ERROR_WRONG_USER_KEY");
+                return;
+            }
+
+            // CapSkip reads hCaptcha's invisible as "1" or "true" only; a bool
+            // stringified any other way ("True", "") would silently mean "visible".
+            // The mock refuses it so the integration test catches the slip.
+            if (fields.TryGetValue("method", out var submitMethod) && submitMethod == "hcaptcha"
+                && fields.TryGetValue("invisible", out var invisible) && invisible != "1" && invisible != "true")
+            {
+                Send(stream, "ERROR_BAD_PARAMETERS");
                 return;
             }
 

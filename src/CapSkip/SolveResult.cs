@@ -6,8 +6,9 @@ namespace CapSkip
     /// <c>userAgent</c>, for GeeTest <c>challenge</c>/<c>validate</c>/<c>seccode</c>, and for
     /// ALTCHA <c>token</c>/<c>number</c>, for Capy
     /// <c>captchakey</c>/<c>challengekey</c>/<c>answer</c>, for AWS WAF
-    /// <c>captcha_voucher</c>/<c>existing_token</c>, and for DataDome
-    /// <c>cookie</c>/<c>userAgent</c>/<c>proxy</c>).
+    /// <c>captcha_voucher</c>/<c>existing_token</c>, for DataDome
+    /// <c>cookie</c>/<c>userAgent</c>/<c>proxy</c>, and for hCaptcha
+    /// <c>token</c>/<c>respKey</c>/<c>userAgent</c>).
     /// </summary>
     public sealed class SolveResult
     {
@@ -28,8 +29,9 @@ namespace CapSkip
         /// stays <see langword="null"/> when the solve captured none rather than
         /// being guessed. For DataDome, the User-Agent the cookie was earned with
         /// (yours, or CapSkip's browser's when you sent none): send it with every
-        /// request that carries the cookie. <see langword="null"/> for other
-        /// captcha types.
+        /// request that carries the cookie. For hCaptcha, the User-Agent the token
+        /// was earned with, when the reply carried one: submit the form with it.
+        /// <see langword="null"/> for other captcha types.
         /// </summary>
         public string? UserAgent { get; set; }
 
@@ -52,9 +54,12 @@ namespace CapSkip
         public string? Seccode { get; set; }
 
         /// <summary>
-        /// ALTCHA only — the base64 payload to post back in the site's <c>altcha</c>
-        /// form field. The same string as <see cref="Code"/>, named for where it
-        /// goes. <see langword="null"/> for other captcha types.
+        /// The token, named for the form field it fills: the same string as
+        /// <see cref="Code"/>. For ALTCHA the base64 payload for the site's
+        /// <c>altcha</c> field; for hCaptcha the value for
+        /// <c>h-captcha-response</c> (and <c>g-recaptcha-response</c>); likewise for
+        /// CaptchaFox and Friendly Captcha. <see langword="null"/> for other captcha
+        /// types.
         /// </summary>
         public string? Token { get; set; }
 
@@ -84,9 +89,12 @@ namespace CapSkip
         public string? Answer { get; set; }
 
         /// <summary>
-        /// Capy only — empty for a puzzle solve. Present for shape compatibility with
-        /// 2Captcha's documented response; it carries nothing.
-        /// <see langword="null"/> for other captcha types.
+        /// hCaptcha — the second value hCaptcha hands the widget next to the token
+        /// (<c>hcaptcha.getRespKey()</c>). Never <see langword="null"/> for an
+        /// hCaptcha result: empty when the widget handed out none. Most sites never
+        /// read it. Capy — empty for a puzzle solve, present for shape compatibility
+        /// with 2Captcha's documented response. Any other polled result carries it
+        /// when the server sent one; <see langword="null"/> otherwise.
         /// </summary>
         public string? RespKey { get; set; }
 
@@ -156,6 +164,14 @@ namespace CapSkip
             {
                 return $"SolveResult {{ CaptchaId = {CaptchaId}, Challenge = {Challenge}, "
                     + $"Validate = {Validate}, Seccode = {Seccode} }}";
+            }
+
+            if (RespKey != null && Token != null)
+            {
+                return UserAgent is null
+                    ? $"SolveResult {{ CaptchaId = {CaptchaId}, Token = {Token}, RespKey = {RespKey} }}"
+                    : $"SolveResult {{ CaptchaId = {CaptchaId}, Token = {Token}, RespKey = {RespKey}, "
+                        + $"UserAgent = {UserAgent} }}";
             }
 
             return UserAgent is null

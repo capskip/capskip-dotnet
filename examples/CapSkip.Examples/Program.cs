@@ -39,6 +39,9 @@ switch (command)
     case "datadome":
         await DataDomeExample.RunAsync();
         break;
+    case "hcaptcha":
+        await HCaptchaExample.RunAsync();
+        break;
     case "async":
         await AsyncExample.RunAsync();
         break;
@@ -58,6 +61,7 @@ switch (command)
         Console.WriteLine("  friendly   Solve a Friendly Captcha (say which version: v1 or v2)");
         Console.WriteLine("  awswaf     Solve an AWS WAF CAPTCHA (returns a voucher pair, not a token)");
         Console.WriteLine("  datadome   Pass a DataDome block page (returns a cookie, set TARGET_URL)");
+        Console.WriteLine("  hcaptcha   Solve an hCaptcha widget (hCaptcha's public demo)");
         Console.WriteLine("  async      Solve several captchas concurrently");
         Console.WriteLine("  verify     Check CapSkip is running (accepts --host --port --api-key)");
         Console.WriteLine();
