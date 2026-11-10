@@ -118,6 +118,17 @@ namespace CapSkip.Tests
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
 
+        /// <summary>
+        /// MTCaptcha, as CapSkip's res.php answers it: the <c>v1(...)</c> token and
+        /// nothing else.
+        /// </summary>
+        public const string MtCaptchaToken =
+            "v1(0f3c9e2a,7b1d4c88,MTPublic-KzqLY1cKH,5e0c2a9f61d84b37a0c1e9b2d6f4a873,"
+            + "Qm9ndXNUb2tlbkZvclRlc3RzT25seV9fTm90QVJlYWxNVENhcHRjaGFUb2tlbi1BYkNkRWZHaA**)";
+
+        private static readonly System.Text.RegularExpressions.Regex MtCaptchaSitekey =
+            new System.Text.RegularExpressions.Regex("^MTPublic-[A-Za-z0-9_-]{1,55}$");
+
         private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, string>> _submitted =
             new ConcurrentDictionary<string, IReadOnlyDictionary<string, string>>();
 
@@ -360,6 +371,22 @@ namespace CapSkip.Tests
                     Send(stream, $"OK|{HCaptchaToken}");
                 }
             }
+            else if (_idType.TryGetValue(cid, out var mtType) && (mtType == "mt_captcha" || mtType == "mtcaptcha"))
+            {
+                if (wantJson)
+                {
+                    var reply = new Dictionary<string, object>
+                    {
+                        ["status"] = 1,
+                        ["request"] = MtCaptchaToken,
+                    };
+                    Send(stream, JsonSerializer.Serialize(reply), "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{MtCaptchaToken}");
+                }
+            }
             else if (_idType.TryGetValue(cid, out var friendlyType) && friendlyType == "friendly_captcha")
             {
                 if (wantJson)
@@ -415,6 +442,15 @@ namespace CapSkip.Tests
             // The mock refuses it so the integration test catches the slip.
             if (fields.TryGetValue("method", out var submitMethod) && submitMethod == "hcaptcha"
                 && fields.TryGetValue("invisible", out var invisible) && invisible != "1" && invisible != "true")
+            {
+                Send(stream, "ERROR_BAD_PARAMETERS");
+                return;
+            }
+
+            // CapSkip answers ERROR_BAD_PARAMETERS for an MTCaptcha sitekey that
+            // fails its test, so a local-validation slip shows up here.
+            if (fields.TryGetValue("method", out var mtMethod) && (mtMethod == "mt_captcha" || mtMethod == "mtcaptcha")
+                && !(fields.TryGetValue("sitekey", out var mtSitekey) && MtCaptchaSitekey.IsMatch(mtSitekey)))
             {
                 Send(stream, "ERROR_BAD_PARAMETERS");
                 return;

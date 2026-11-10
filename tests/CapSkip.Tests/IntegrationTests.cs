@@ -650,5 +650,83 @@ namespace CapSkip.Tests
             Assert.Equal(MockServer.HCaptchaRespKey, result.RespKey);
             Assert.Equal(MockServer.HCaptchaUserAgent, result.UserAgent);
         }
+
+        // -- MTCaptcha ---------------------------------------------------------
+
+        private const string MtSiteKey = "MTPublic-KzqLY1cKH";
+        private const string MtPage = "https://2captcha.com/demo/mtcaptcha";
+
+        [Fact]
+        public async Task MtCaptcha()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.MtCaptchaAsync(MtSiteKey, MtPage);
+
+            Assert.False(string.IsNullOrEmpty(result.CaptchaId));
+            Assert.Equal(MockServer.MtCaptchaToken, result.Code);
+            Assert.Equal(MockServer.MtCaptchaToken, result.Token);
+            Assert.Equal("mt_captcha", _server.Submitted(result.CaptchaId)["method"]);
+        }
+
+        /// <summary>
+        /// The sk= prefix has to be stripped before it reaches the mock, which, like
+        /// CapSkip, refuses a sitekey that fails the server's test. The proxy
+        /// password's %40 must survive the form encoding.
+        /// </summary>
+        [Fact]
+        public async Task MtCaptchaWithEveryOption()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.MtCaptchaAsync("sk=" + MtSiteKey, MtPage, new Dictionary<string, object?>
+            {
+                ["action"] = "login",
+                ["userAgent"] = "Mozilla/5.0 (caller)",
+                ["proxy"] = new Proxy("SOCKS5H", "login:p%40ss@203.0.113.7:1080"),
+            });
+
+            Assert.Equal(MockServer.MtCaptchaToken, result.Token);
+
+            var sent = _server.Submitted(result.CaptchaId);
+            Assert.Equal(MtSiteKey, sent["sitekey"]);
+            Assert.Equal(MtPage, sent["pageurl"]);
+            Assert.Equal("login", sent["action"]);
+            Assert.Equal("Mozilla/5.0 (caller)", sent["useragent"]);
+            Assert.Equal("login:p%40ss@203.0.113.7:1080", sent["proxy"]);
+            Assert.Equal("SOCKS5H", sent["proxytype"]);
+        }
+
+        [Fact]
+        public async Task MtCaptchaBadSitekeyIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(() => solver.MtCaptchaAsync("KzqLY1cKH", MtPage));
+        }
+
+        [Fact]
+        public async Task MtCaptchaSocks4IsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => solver.MtCaptchaAsync(MtSiteKey, MtPage, new Dictionary<string, object?>
+                {
+                    ["proxy"] = new Proxy("SOCKS4", "203.0.113.7:1080"),
+                }));
+        }
+
+        [Fact]
+        public async Task MtCaptchaThroughTheAsyncAlias()
+        {
+            var solver = new AsyncCapSkip(host: _server.Host, port: _server.Port, pollingInterval: 1);
+
+            var result = await solver.MtCaptchaAsync(
+                MtSiteKey, MtPage, new Dictionary<string, object?> { ["action"] = "login" });
+
+            Assert.Equal(MockServer.MtCaptchaToken, result.Code);
+            Assert.Equal(MockServer.MtCaptchaToken, result.Token);
+        }
     }
 }

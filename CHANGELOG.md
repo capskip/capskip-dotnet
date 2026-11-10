@@ -5,6 +5,36 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-11-10
+
+### Added
+
+- **MTCaptcha support** via `MtCaptchaAsync(sitekey, url, options)`, sent as
+  `method=mt_captcha`, following 2Captcha's `mtcaptcha(sitekey, url, ...)`.
+  `pageurl` is accepted in `options` for `url` as on every other method, and it
+  works the same through `AsyncCapSkip`.
+- Optional parameters: `action` (the action the page's `mtcaptchaConfig` sets),
+  `userAgent` / `useragent` / `user_agent`, and `proxy`.
+- The result carries the token, `v1(...)`, as both `Code` and `Token`, for the
+  form's `mtcaptcha-verifiedtoken` field.
+- An `mtcaptcha` example (`dotnet run -- mtcaptcha`) against 2Captcha's public
+  MTCaptcha demo page.
+
+### Changed
+
+- The README's desktop-app download link now points to
+  <https://capskip.com/download-capskip/> instead of the `.msi` file.
+
+### Notes
+
+- Refused locally with a `ValidationException`, before a round-trip: a missing
+  sitekey or one that is not `MTPublic-` followed by letters, digits, `-` or `_`
+  (64 characters at most), a page URL that is missing or not an absolute http(s)
+  address, and any parameter the CapSkip MTCaptcha API does not take. An `sk=`
+  prefix, as MTCaptcha's own `getchallenge` request writes the key, is stripped,
+  and an optional sent as `null` or an empty string is not sent.
+- MTCaptcha uses `defaultTimeout`: no browser runs for the solve.
+
 ## [1.6.0] - 2026-11-05
 
 ### Added

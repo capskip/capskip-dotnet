@@ -97,6 +97,20 @@ namespace CapSkip
             "proxy", "proxytype",
         };
 
+        internal static readonly HashSet<string> MtCaptchaSubmit = new HashSet<string>
+        {
+            "method", "sitekey", "pageurl", "action", "useragent", "json",
+            "proxy", "proxytype",
+        };
+
+        /// <summary>
+        /// The server's sitekey test: <c>MTPublic-</c> then 1-55 letters, digits,
+        /// <c>-</c> or <c>_</c> (64 characters at most). Anything else is answered
+        /// ERROR_BAD_PARAMETERS.
+        /// </summary>
+        private static readonly Regex MtCaptchaSitekey =
+            new Regex("^MTPublic-[A-Za-z0-9_-]{1,55}$", RegexOptions.CultureInvariant);
+
         internal static readonly HashSet<string> DataDomeSubmit = new HashSet<string>
         {
             "method", "captcha_url", "pageurl", "useragent", "json", "proxy", "proxytype",
@@ -306,6 +320,10 @@ namespace CapSkip
                 case "hcaptcha":
                     prepared = NormalizeHCaptchaSubmit(prepared);
                     ValidateHCaptchaSubmit(prepared);
+                    break;
+                case "mtcaptcha":
+                    prepared = NormalizeMtCaptchaSubmit(prepared);
+                    ValidateMtCaptchaSubmit(prepared);
                     break;
             }
 
@@ -969,6 +987,74 @@ namespace CapSkip
             {
                 throw new ValidationException(
                     $"Unsupported parameters for hCaptcha: {ReprList(unknown)}.");
+            }
+        }
+
+        /// <summary>
+        /// Drop unset and empty optionals, and strip the sitekey the way the server
+        /// does: surrounding whitespace and a leading <c>sk=</c> in any case.
+        /// </summary>
+        /// <remarks>
+        /// MTCaptcha's own getchallenge query names the key <c>sk=MTPublic-...</c>,
+        /// and callers copy it from there.
+        /// </remarks>
+        private static Dictionary<string, object?> NormalizeMtCaptchaSubmit(IDictionary<string, object?> parameters)
+        {
+            var prepared = DropUnsetOrEmpty(parameters);
+            if (prepared.TryGetValue("sitekey", out var raw) && raw is string sitekey)
+            {
+                sitekey = sitekey.Trim();
+                if (sitekey.StartsWith("sk=", StringComparison.OrdinalIgnoreCase))
+                {
+                    sitekey = sitekey.Substring(3).Trim();
+                }
+
+                prepared["sitekey"] = sitekey;
+            }
+
+            return prepared;
+        }
+
+        private static void ValidateMtCaptchaSubmit(IDictionary<string, object?> parameters)
+        {
+            // The server answers ERROR_BAD_PARAMETERS for a missing or malformed
+            // sitekey and ERROR_PAGEURL for a page URL that is missing or not
+            // http(s). Fail locally so neither costs a round-trip.
+            parameters.TryGetValue("sitekey", out var sitekeyValue);
+            var sitekey = Convert.ToString(sitekeyValue, CultureInfo.InvariantCulture) ?? string.Empty;
+            if (sitekey.Trim().Length == 0)
+            {
+                throw new ValidationException("'sitekey' is required for MTCaptcha.");
+            }
+
+            if (!(sitekeyValue is string) || !MtCaptchaSitekey.IsMatch(sitekey))
+            {
+                throw new ValidationException(
+                    $"'{sitekey}' is not an MTCaptcha sitekey. It starts with MTPublic- followed by "
+                    + "letters, digits, '-' or '_' (64 characters at most).");
+            }
+
+            parameters.TryGetValue("pageurl", out var pageurlValue);
+            var pageurl = (Convert.ToString(pageurlValue, CultureInfo.InvariantCulture) ?? string.Empty).Trim();
+            if (pageurl.Length == 0)
+            {
+                throw new ValidationException("'pageurl' is required for MTCaptcha.");
+            }
+
+            if (pageurl.IndexOf("://", StringComparison.Ordinal) < 0
+                || !Uri.TryCreate(pageurl, UriKind.Absolute, out var pageUri)
+                || (pageUri.Scheme != Uri.UriSchemeHttp && pageUri.Scheme != Uri.UriSchemeHttps)
+                || string.IsNullOrEmpty(pageUri.Host))
+            {
+                throw new ValidationException(
+                    $"'pageurl' must be an absolute http or https URL for MTCaptcha, got '{pageurl}'.");
+            }
+
+            var unknown = UnknownKeys(parameters, MtCaptchaSubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for MTCaptcha: {ReprList(unknown)}.");
             }
         }
 

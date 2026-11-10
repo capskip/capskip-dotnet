@@ -7,8 +7,8 @@ namespace CapSkip
     /// ALTCHA <c>token</c>/<c>number</c>, for Capy
     /// <c>captchakey</c>/<c>challengekey</c>/<c>answer</c>, for AWS WAF
     /// <c>captcha_voucher</c>/<c>existing_token</c>, for DataDome
-    /// <c>cookie</c>/<c>userAgent</c>/<c>proxy</c>, and for hCaptcha
-    /// <c>token</c>/<c>respKey</c>/<c>userAgent</c>).
+    /// <c>cookie</c>/<c>userAgent</c>/<c>proxy</c>, for hCaptcha
+    /// <c>token</c>/<c>respKey</c>/<c>userAgent</c>, and for MTCaptcha <c>token</c>).
     /// </summary>
     public sealed class SolveResult
     {
@@ -57,7 +57,8 @@ namespace CapSkip
         /// The token, named for the form field it fills: the same string as
         /// <see cref="Code"/>. For ALTCHA the base64 payload for the site's
         /// <c>altcha</c> field; for hCaptcha the value for
-        /// <c>h-captcha-response</c> (and <c>g-recaptcha-response</c>); likewise for
+        /// <c>h-captcha-response</c> (and <c>g-recaptcha-response</c>); for MTCaptcha
+        /// the <c>v1(...)</c> value for <c>mtcaptcha-verifiedtoken</c>; likewise for
         /// CaptchaFox and Friendly Captcha. <see langword="null"/> for other captcha
         /// types.
         /// </summary>

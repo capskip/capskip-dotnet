@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://github.com/capskip/capskip-dotnet/actions/workflows/ci.yml/badge.svg)](https://github.com/capskip/capskip-dotnet/actions/workflows/ci.yml)
 
-**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha and image captchas from C#.**
+**Solve reCAPTCHA v2, reCAPTCHA v3, Cloudflare Turnstile, GeeTest, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha, MTCaptcha and image captchas from C#.**
 
 Official .NET client for [CapSkip](https://capskip.com), a **local captcha solver** that runs on your own machine. Licensed once, not billed per solve.
 
@@ -21,7 +21,7 @@ Targets **.NET Standard 2.0**, so it runs on .NET 6/7/8/9+, .NET Core 2.0+, and 
 
 CapSkip is a desktop app. It does the solving on your machine and exposes the standard captcha-solver HTTP API — the same `in.php` / `res.php` endpoints every 2captcha-compatible client already speaks — on `127.0.0.1:8080`.
 
-This SDK is a thin wrapper over that API, with the method names you would expect: `NormalAsync()`, `RecaptchaAsync()`, `TurnstileAsync()`, `GeetestAsync()`, `AltchaAsync()`, `CapyAsync()`, `CaptchaFoxAsync()`, `FriendlyCaptchaAsync()`, `AmazonWafAsync()`, `DataDomeAsync()`, `HCaptchaAsync()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
+This SDK is a thin wrapper over that API, with the method names you would expect: `NormalAsync()`, `RecaptchaAsync()`, `TurnstileAsync()`, `GeetestAsync()`, `AltchaAsync()`, `CapyAsync()`, `CaptchaFoxAsync()`, `FriendlyCaptchaAsync()`, `AmazonWafAsync()`, `DataDomeAsync()`, `HCaptchaAsync()`, `MtCaptchaAsync()`. Nothing leaves your network, and there is no credit balance to keep an eye on.
 
 ## Supported captcha types
 
@@ -43,6 +43,7 @@ This SDK is a thin wrapper over that API, with the method names you would expect
 | **AWS WAF solver** (challenge page or widget) | `solver.AmazonWafAsync(sitekey, url, options)` |
 | **DataDome solver** (slider and device check) | `solver.DataDomeAsync(captchaUrl, url)` |
 | **hCaptcha solver** (checkbox, invisible and Enterprise) | `solver.HCaptchaAsync(sitekey, url)` |
+| **MTCaptcha solver** (text captcha) | `solver.MtCaptchaAsync(sitekey, url)` |
 
 The options argument is a `Dictionary<string, object?>` — the table shortens it to `new() { ... }` to stay readable; full signatures are in the [API Reference](docs/API_REFERENCE.md).
 
@@ -56,7 +57,7 @@ Point the SDK at the [live captcha demo pages](https://capskip.com/captcha-demo/
 
 ### 1. Install the CapSkip captcha solver
 
-Download and run the CapSkip desktop app — [CapSkipInstaller.msi](https://capskip.com/download/CapSkipInstaller.msi). Leave it running in the background.
+Download and run the CapSkip desktop app from the [download page](https://capskip.com/download-capskip/). Leave it running in the background.
 
 In CapSkip settings, note:
 
@@ -129,10 +130,10 @@ var solver = new CapSkipClient(
     apiKey: "capskip",        // your CapSkip API key (or any string if validation is off)
     host: "127.0.0.1",        // CapSkip host
     port: 8080,               // CapSkip port from app settings
-    defaultTimeout: 120,      // seconds — image captcha polling timeout
+    defaultTimeout: 120,      // seconds — image captcha, ALTCHA, Capy and MTCaptcha polling timeout
     recaptchaTimeout: 300,    // seconds — reCAPTCHA / Turnstile / GeeTest / CaptchaFox /
                               // Friendly Captcha / AWS WAF / DataDome / hCaptcha polling timeout
-                              // (ALTCHA and Capy use defaultTimeout — neither is a browser solve)
+                              // (ALTCHA, Capy and MTCaptcha use defaultTimeout — none is a browser solve)
     pollingInterval: 5);      // max seconds between res.php polls (starts at 0.25s, backs off to this)
 ```
 
@@ -491,6 +492,47 @@ so send a proxy with each task or configure a pool in the CapSkip app (Settings,
 Captcha types, hCaptcha, Configure Proxies). If a strict site still refuses the
 tokens, turn on High score mode for hCaptcha in the same settings page.
 
+### MTCaptcha
+
+MTCaptcha is a text captcha used on login, sign-up and contact forms: the
+visitor types the distorted characters in a picture and the widget puts a
+verified token into the form. CapSkip takes the sitekey and page address and
+returns that token. The arguments follow 2Captcha's
+`mtcaptcha(sitekey, url, ...)`: the sitekey and the page URL positionally, the
+rest in the options dictionary.
+
+```csharp
+var result = await solver.MtCaptchaAsync(
+    "MTPublic-KzqLY1cKH",                         // from the page's mtcaptchaConfig
+    "https://2captcha.com/demo/mtcaptcha",        // the page the widget is on
+    new Dictionary<string, object?>
+    {
+        // ["action"] = "login",                 // the action mtcaptchaConfig sets, if it sets one
+        // ["userAgent"] = "Mozilla/5.0 ...",    // the User-Agent to present to MTCaptcha
+        // ["proxy"] = new Proxy("HTTP", "login:password@203.0.113.10:8080"),
+    });
+
+result.Token;   // v1(...) -- put it in the mtcaptcha-verifiedtoken field
+```
+
+The sitekey starts with `MTPublic-`. Most pages set it in a `mtcaptchaConfig`
+object in the page source; when the widget is on screen it is also the `sitekey`
+query parameter of its iframe on `service.mtcaptcha.com`. A key copied from the
+widget's own `getchallenge` request as `sk=MTPublic-...` is accepted too.
+MTCaptcha issues tokens only for the domains the sitekey is registered for, so
+send the real page address.
+
+```csharp
+((IJavaScriptExecutor)driver).ExecuteScript(
+    "document.querySelector('[name=\"mtcaptcha-verifiedtoken\"]').value = arguments[0];",
+    result.Token);
+```
+
+No browser runs for this solve, so it uses `defaultTimeout`. Every solve asks
+MTCaptcha's service for fresh challenges, so at volume configure a proxy pool in
+the CapSkip app (Settings, Captcha types, MTCaptcha, Configure Proxies) or send a
+proxy with each task.
+
 ### With a proxy (every method except image captcha)
 
 ```csharp
@@ -570,7 +612,7 @@ public sealed class SolveResult
     public string? Challenge { get; } // GeeTest only — geetest_challenge
     public string? Validate  { get; } // GeeTest only — geetest_validate
     public string? Seccode   { get; } // GeeTest only — geetest_seccode
-    public string? Token     { get; } // ALTCHA, CaptchaFox, Friendly Captcha & hCaptcha — the payload to post back
+    public string? Token     { get; } // ALTCHA, CaptchaFox, Friendly Captcha, hCaptcha & MTCaptcha — the payload to post back
     public long?   Number    { get; } // ALTCHA only — the counter that solved it
     public string? CaptchaKey   { get; } // Capy only — capy_captchakey
     public string? ChallengeKey { get; } // Capy only — capy_challengekey
@@ -582,6 +624,8 @@ public sealed class SolveResult
     public string? Proxy     { get; } // DataDome — host:port when CapSkip picked the proxy
 }
 ```
+
+MTCaptcha adds `Token`, the same string as `Code`.
 
 ---
 
@@ -614,7 +658,7 @@ catch (CapSkipError)          { /* any other CapSkip failure */ }
 
 ### How do I solve a captcha in C#?
 
-Install the CapSkip desktop app, `dotnet add package CapSkip`, then await the method that matches the widget — `RecaptchaAsync()`, `TurnstileAsync()`, `GeetestAsync()`, `AltchaAsync()`, `CapyAsync()`, `CaptchaFoxAsync()`, `FriendlyCaptchaAsync()`, `AmazonWafAsync()`, `DataDomeAsync()`, `HCaptchaAsync()` or `NormalAsync()`. Each returns a `SolveResult` whose `Code` is the token (a cookie for DataDome), or the recognized text in the case of an image captcha.
+Install the CapSkip desktop app, `dotnet add package CapSkip`, then await the method that matches the widget — `RecaptchaAsync()`, `TurnstileAsync()`, `GeetestAsync()`, `AltchaAsync()`, `CapyAsync()`, `CaptchaFoxAsync()`, `FriendlyCaptchaAsync()`, `AmazonWafAsync()`, `DataDomeAsync()`, `HCaptchaAsync()`, `MtCaptchaAsync()` or `NormalAsync()`. Each returns a `SolveResult` whose `Code` is the token (a cookie for DataDome), or the recognized text in the case of an image captcha.
 
 ### Is this a free captcha solver?
 
@@ -622,7 +666,7 @@ The SDK itself is MIT-licensed and free. Solving needs the CapSkip app, which is
 
 ### Which captchas can it solve?
 
-reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha (including invisible and Enterprise), and image/text captchas. Not FunCaptcha/Arkose.
+reCAPTCHA v2 (checkbox and invisible), reCAPTCHA v3, reCAPTCHA Enterprise, Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha (including invisible and Enterprise), MTCaptcha, and image/text captchas. Not FunCaptcha/Arkose.
 
 ### Does it work with Selenium and Playwright?
 
@@ -660,7 +704,7 @@ The test suite mocks the HTTP layer and spins up a local mock server — no CapS
 
 ## Links
 
-- [CapSkip — local captcha solver](https://capskip.com) · [download the app](https://capskip.com/download/CapSkipInstaller.msi)
+- [CapSkip — local captcha solver](https://capskip.com) · [download the app](https://capskip.com/download-capskip/)
 - [Captcha demo pages](https://capskip.com/captcha-demo/) — live reCAPTCHA, Turnstile, GeeTest and image widgets
 - [C# captcha solver guide](https://capskip.com/csharp-captcha-solver/)
 - [HTTP API docs](https://capskip.com/api-docs/)

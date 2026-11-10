@@ -29,6 +29,7 @@ The SDK only supports the captcha types documented by CapSkip.
 | AWS WAF (challenge page or widget) | `AmazonWafAsync()` | `amazon_waf` |
 | DataDome (slider and device check) | `DataDomeAsync()` | `datadome` |
 | hCaptcha (checkbox, invisible, Enterprise) | `HCaptchaAsync()` | `hcaptcha` |
+| MTCaptcha (text captcha) | `MtCaptchaAsync()` | `mt_captcha` |
 
 **Proxy** is supported for every method except image
 captcha. For ALTCHA the proxy is used only for the `challenge_url` fetch.
@@ -54,7 +55,7 @@ var solver = new CapSkipClient(
 | `apiKey` | `string` | `"capskip"` | CapSkip API key (any string when validation is off) |
 | `host` | `string` | `"127.0.0.1"` | CapSkip host |
 | `port` | `int` | `8080` | CapSkip port |
-| `defaultTimeout` | `double` | `120` | Seconds to poll an image captcha |
+| `defaultTimeout` | `double` | `120` | Seconds to poll the solves that run no browser (image captcha, ALTCHA, Capy, MTCaptcha) |
 | `recaptchaTimeout` | `double` | `300` | Seconds to poll the browser-backed solves (reCAPTCHA, Turnstile, GeeTest, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha) |
 | `pollingInterval` | `double` | `5` | Max seconds between polls (starts at 0.25s, backs off to this) |
 
@@ -943,6 +944,72 @@ Uses `recaptchaTimeout`: the widget is passed in a real browser.
 
 ---
 
+## 13. MTCaptcha — `MtCaptchaAsync(sitekey, url, options?)`
+
+MTCaptcha is a text captcha: the visitor types the characters in a picture and
+the widget writes a verified token into the form field `mtcaptcha-verifiedtoken`.
+CapSkip takes the sitekey and page address and returns that token. Public docs:
+<https://capskip.com/api-docs/#mtcaptcha>.
+
+The arguments follow 2Captcha's `mtcaptcha(sitekey, url, ...)`, so code written
+against it keeps working. `pageurl` is accepted in the options for `url`.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `mt_captcha` (`mtcaptcha` is accepted too) |
+| `sitekey` | string | Yes | The MTCaptcha sitekey: `MTPublic-` then letters, digits, `-` or `_`, 64 characters at most. An `sk=` prefix and surrounding whitespace are stripped |
+| `pageurl` | string | Yes | Full http or https URL of the page the widget is on |
+| `action` | string | No | The `action` the page sets in its `mtcaptchaConfig` object, if any |
+| `userAgent` | string | No | The User-Agent to present to MTCaptcha. Sent as `useragent` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | `HTTP`, `HTTPS`, `SOCKS5` or `SOCKS5H` |
+
+Refused locally with `ValidationException`, as CapSkip would refuse them: a
+missing or malformed sitekey (`ERROR_BAD_PARAMETERS`), a `pageurl` that is
+missing or not an absolute http(s) address (`ERROR_PAGEURL`), a `proxytype`
+outside the four above (`ERROR_PROXY_FORMAT`), and any parameter not in the table.
+Optionals left `null` or `""` are not sent.
+
+### GET `/res.php`
+
+The SDK polls with `json=1`, where CapSkip returns the token in `request`:
+
+```json
+{
+  "status": 1,
+  "request": "v1(0f3c9e2a,7b1d4c88,MTPublic-KzqLY1cKH,5e0c2a9f61d84b37a0c1e9b2d6f4a873,Qm9ndXNU...ZWZHaA**)"
+}
+```
+
+A task MTCaptcha refused the sitekey for fails with
+`ERROR_RECAPTCHA_INVALID_SITEKEY`, one whose sitekey is not allowed on the
+domain of `pageurl` with `ERROR_RECAPTCHA_INVALID_DOMAIN`; resubmitting the
+same task would fail again.
+
+### SDK usage
+
+```csharp
+var result = await solver.MtCaptchaAsync("MTPublic-KzqLY1cKH",
+    "https://2captcha.com/demo/mtcaptcha");
+
+// With the page's action, through a proxy
+var result = await solver.MtCaptchaAsync(sitekey, pageUrl, new Dictionary<string, object?>
+{
+    ["action"] = "login",
+    ["proxy"] = new Proxy("HTTP", "login:password@203.0.113.10:8080"),
+});
+
+form["mtcaptcha-verifiedtoken"] = result.Token;
+```
+
+Uses `defaultTimeout`: no browser runs, CapSkip reads the challenge itself.
+
+---
+
 ## Return value
 
 Every solve method returns a `SolveResult`:
@@ -956,7 +1023,7 @@ public sealed class SolveResult
     public string? Challenge { get; }    // GeeTest
     public string? Validate { get; }     // GeeTest
     public string? Seccode { get; }      // GeeTest
-    public string? Token { get; }        // ALTCHA, CaptchaFox, Friendly Captcha, hCaptcha
+    public string? Token { get; }        // ALTCHA, CaptchaFox, Friendly Captcha, hCaptcha, MTCaptcha
     public long? Number { get; }         // ALTCHA
     public string? CaptchaKey { get; }   // Capy — capy_captchakey
     public string? ChallengeKey { get; } // Capy — capy_challengekey
@@ -1009,6 +1076,14 @@ reply that includes one):
 // result.Token      "P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
 // result.RespKey    "E0_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
 // result.UserAgent  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ..."
+```
+
+MTCaptcha sets `Token`, the same string as `Code`:
+
+```csharp
+// result.CaptchaId  "12345"
+// result.Code       "v1(0f3c9e2a,7b1d4c88,MTPublic-KzqLY1cKH,…**)"
+// result.Token      "v1(0f3c9e2a,7b1d4c88,MTPublic-KzqLY1cKH,…**)"
 ```
 
 ---

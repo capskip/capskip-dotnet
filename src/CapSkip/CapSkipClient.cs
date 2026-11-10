@@ -11,7 +11,7 @@ namespace CapSkip
     /// <summary>
     /// Client for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3,
     /// Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly
-    /// Captcha, AWS WAF, DataDome and hCaptcha). Every solve method is asynchronous and returns a
+    /// Captcha, AWS WAF, DataDome, hCaptcha and MTCaptcha). Every solve method is asynchronous and returns a
     /// <see cref="SolveResult"/>.
     /// </summary>
     public class CapSkipClient
@@ -23,7 +23,7 @@ namespace CapSkip
         internal const double InitialPollingInterval = 0.25;
 
         /// <summary>The installed SDK version.</summary>
-        public static readonly string Version = "1.6.0";
+        public static readonly string Version = "1.7.0";
 
         /// <summary>CapSkip API key sent with every request.</summary>
         public string ApiKey { get; }
@@ -667,6 +667,71 @@ namespace CapSkip
             return HCaptchaAsync(sitekey, url, opts, cancellationToken);
         }
 
+        /// <summary>Solve an MTCaptcha text captcha and return its token.</summary>
+        /// <param name="sitekey">
+        /// The widget's sitekey, <c>MTPublic-</c> followed by letters, digits,
+        /// <c>-</c> or <c>_</c>. It is in the page's <c>mtcaptchaConfig</c> object, or
+        /// in the <c>sitekey</c> query parameter of the widget's iframe. A leading
+        /// <c>sk=</c> (as MTCaptcha's own getchallenge query writes it) and
+        /// surrounding whitespace are stripped before it is checked and sent.
+        /// </param>
+        /// <param name="url">
+        /// Full http or https URL of the page the widget is on. MTCaptcha issues
+        /// tokens only for the domains the sitekey is registered for.
+        /// </param>
+        /// <param name="options">
+        /// Optional <c>action</c>: the <c>action</c> the page sets in
+        /// <c>mtcaptchaConfig</c>, if any. Optional <c>userAgent</c>: the User-Agent
+        /// to present to MTCaptcha. Optional <c>proxy</c>, as a URI string (HTTP), a
+        /// <see cref="CapSkip.Proxy"/>, or
+        /// <c>{ ["type"] = "HTTP", ["uri"] = "login:password@IP:PORT" }</c>.
+        /// <c>pageurl</c> is accepted in place of <paramref name="url"/>, and
+        /// <c>useragent</c> / <c>user_agent</c> in place of <c>userAgent</c>.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result whose <see cref="SolveResult.Token"/> is the token,
+        /// <c>v1(...)</c>, for the form's <c>mtcaptcha-verifiedtoken</c> field, with
+        /// the same string in <see cref="SolveResult.Code"/>.
+        /// </returns>
+        /// <remarks>
+        /// The arguments follow 2Captcha's <c>mtcaptcha(sitekey, url, **kwargs)</c>.
+        /// No browser runs: CapSkip fetches the challenge and reads the text itself,
+        /// so the solve keeps <see cref="DefaultTimeout"/>, like ALTCHA and Capy.
+        /// </remarks>
+        public async Task<SolveResult> MtCaptchaAsync(
+            string sitekey,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            var pars = new Dictionary<string, object?>
+            {
+                ["sitekey"] = sitekey,
+            };
+
+            // Left out when null, so pageurl in options can stand in for it without
+            // tripping the alias conflict check.
+            if (url != null)
+            {
+                pars["url"] = url;
+            }
+
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "mt_captcha";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyTokenSolution(result);
+        }
+
         /// <summary>Submit then poll to completion. Used by the higher-level solve methods.</summary>
         public async Task<SolveResult> SolveAsync(
             IDictionary<string, object?> options,
@@ -862,6 +927,11 @@ namespace CapSkip
             if (method == "hcaptcha")
             {
                 return ApiParams.PrepareSubmitParams(parameters, "hcaptcha");
+            }
+
+            if (method == "mt_captcha" || method == "mtcaptcha")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "mtcaptcha");
             }
 
             return ApiParams.ApplyProxy(ApiParams.ApplyParamAliases(parameters));
