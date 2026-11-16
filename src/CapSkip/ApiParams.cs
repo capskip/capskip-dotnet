@@ -45,6 +45,12 @@ namespace CapSkip
             "proxy", "proxytype",
         };
 
+        internal static readonly HashSet<string> GeetestV4Submit = new HashSet<string>
+        {
+            "method", "captcha_id", "pageurl", "risk_type", "json",
+            "proxy", "proxytype",
+        };
+
         internal static readonly HashSet<string> AltchaSubmit = new HashSet<string>
         {
             "method", "pageurl", "challenge_url", "challenge_json", "json",
@@ -110,6 +116,21 @@ namespace CapSkip
         /// </summary>
         private static readonly Regex MtCaptchaSitekey =
             new Regex("^MTPublic-[A-Za-z0-9_-]{1,55}$", RegexOptions.CultureInvariant);
+
+        internal static readonly HashSet<string> YandexSubmit = new HashSet<string>
+        {
+            "method", "sitekey", "pageurl", "useragent", "json",
+            "proxy", "proxytype",
+        };
+
+        /// <summary>
+        /// The server's sitekey test for Yandex SmartCaptcha: 16 to 120 letters,
+        /// digits, <c>_</c> or <c>-</c>. Client keys usually start with <c>ysc1_</c>,
+        /// but older ones do not, so the prefix is not required. Anything else is
+        /// answered ERROR_BAD_PARAMETERS.
+        /// </summary>
+        private static readonly Regex YandexSitekey =
+            new Regex("^[A-Za-z0-9_-]{16,120}$", RegexOptions.CultureInvariant);
 
         internal static readonly HashSet<string> DataDomeSubmit = new HashSet<string>
         {
@@ -200,6 +221,12 @@ namespace CapSkip
                 // callers arrive with captchaUrl.
                 new KeyValuePair<string, string>("captchaUrl", "captcha_url"),
                 new KeyValuePair<string, string>("captchaURL", "captcha_url"),
+
+                // GeeTest v4: the API documents captcha_id and riskType, and the
+                // server reads captchaId and risk_type too. The SDK sends captcha_id
+                // and risk_type, the spellings 2Captcha's own SDKs send.
+                new KeyValuePair<string, string>("captchaId", "captcha_id"),
+                new KeyValuePair<string, string>("riskType", "risk_type"),
             };
 
         /// <summary>Map friendly parameter names (e.g. <c>url</c>) to their API names (<c>pageurl</c>).</summary>
@@ -324,6 +351,14 @@ namespace CapSkip
                 case "mtcaptcha":
                     prepared = NormalizeMtCaptchaSubmit(prepared);
                     ValidateMtCaptchaSubmit(prepared);
+                    break;
+                case "geetest_v4":
+                    prepared = NormalizeGeetestV4Submit(prepared);
+                    ValidateGeetestV4Submit(prepared);
+                    break;
+                case "yandex":
+                    prepared = NormalizeYandexSubmit(prepared);
+                    ValidateYandexSubmit(prepared);
                     break;
             }
 
@@ -1055,6 +1090,126 @@ namespace CapSkip
             {
                 throw new ValidationException(
                     $"Unsupported parameters for MTCaptcha: {ReprList(unknown)}.");
+            }
+        }
+
+        /// <summary>
+        /// Drop unset and empty optionals, and trim <c>captcha_id</c> and
+        /// <c>risk_type</c>. A <c>risk_type</c> that trims to nothing is not sent.
+        /// </summary>
+        private static Dictionary<string, object?> NormalizeGeetestV4Submit(IDictionary<string, object?> parameters)
+        {
+            var prepared = DropUnsetOrEmpty(parameters);
+            foreach (var key in new[] { "captcha_id", "risk_type" })
+            {
+                if (prepared.TryGetValue(key, out var raw) && raw is string text)
+                {
+                    text = text.Trim();
+                    if (text.Length == 0)
+                    {
+                        prepared.Remove(key);
+                    }
+                    else
+                    {
+                        prepared[key] = text;
+                    }
+                }
+            }
+
+            return prepared;
+        }
+
+        private static void ValidateGeetestV4Submit(IDictionary<string, object?> parameters)
+        {
+            // captcha_id is static per site and is all v4 needs besides the page:
+            // there is no per-request challenge as in v3. Without it the server
+            // answers ERROR_BAD_PARAMETERS, and without a full pageurl ERROR_PAGEURL.
+            if (!parameters.TryGetValue("captcha_id", out var captchaId) || captchaId is null)
+            {
+                throw new ValidationException("'captcha_id' is required for GeeTest v4.");
+            }
+
+            if (!(captchaId is string))
+            {
+                throw new ValidationException("'captcha_id' must be a string for GeeTest v4.");
+            }
+
+            RequireWebUrl(parameters, "GeeTest v4");
+
+            if (parameters.TryGetValue("risk_type", out var riskType) && riskType != null && !(riskType is string))
+            {
+                throw new ValidationException("'risk_type' must be a string for GeeTest v4.");
+            }
+
+            var unknown = UnknownKeys(parameters, GeetestV4Submit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for GeeTest v4: {ReprList(unknown)}.");
+            }
+        }
+
+        /// <summary>Drop unset and empty optionals, and trim the sitekey.</summary>
+        private static Dictionary<string, object?> NormalizeYandexSubmit(IDictionary<string, object?> parameters)
+        {
+            var prepared = DropUnsetOrEmpty(parameters);
+            if (prepared.TryGetValue("sitekey", out var raw) && raw is string sitekey)
+            {
+                prepared["sitekey"] = sitekey.Trim();
+            }
+
+            return prepared;
+        }
+
+        private static void ValidateYandexSubmit(IDictionary<string, object?> parameters)
+        {
+            // The server answers ERROR_BAD_PARAMETERS for a missing or malformed
+            // sitekey and ERROR_PAGEURL for a page URL that is missing or not
+            // http(s). Fail locally so neither costs a round-trip.
+            parameters.TryGetValue("sitekey", out var sitekeyValue);
+            var sitekey = Convert.ToString(sitekeyValue, CultureInfo.InvariantCulture) ?? string.Empty;
+            if (sitekey.Trim().Length == 0)
+            {
+                throw new ValidationException("'sitekey' is required for Yandex SmartCaptcha.");
+            }
+
+            if (!(sitekeyValue is string) || !YandexSitekey.IsMatch(sitekey))
+            {
+                throw new ValidationException(
+                    $"'{sitekey}' is not a Yandex SmartCaptcha sitekey. It is 16 to 120 letters, "
+                    + "digits, '_' or '-', usually starting with ysc1_.");
+            }
+
+            RequireWebUrl(parameters, "Yandex SmartCaptcha");
+
+            var unknown = UnknownKeys(parameters, YandexSubmit);
+            if (unknown.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Unsupported parameters for Yandex SmartCaptcha: {ReprList(unknown)}.");
+            }
+        }
+
+        /// <summary>
+        /// Refuse a <c>pageurl</c> that is missing or not an absolute http or https
+        /// URL with a host, as the server does with ERROR_PAGEURL.
+        /// </summary>
+        private static void RequireWebUrl(IDictionary<string, object?> parameters, string name)
+        {
+            parameters.TryGetValue("pageurl", out var pageurlValue);
+            var pageurl = (Convert.ToString(pageurlValue, CultureInfo.InvariantCulture) ?? string.Empty).Trim();
+            if (pageurl.Length == 0)
+            {
+                throw new ValidationException($"'pageurl' is required for {name}.");
+            }
+
+            if (pageurl.IndexOf("://", StringComparison.Ordinal) < 0
+                || !Uri.TryCreate(pageurl, UriKind.Absolute, out var pageUri)
+                || (pageUri.Scheme != Uri.UriSchemeHttp && pageUri.Scheme != Uri.UriSchemeHttps)
+                || string.IsNullOrEmpty(pageUri.Host))
+            {
+                throw new ValidationException(
+                    $"'pageurl' must be an absolute http or https URL for {name}, got '{pageurl}'.");
             }
         }
 

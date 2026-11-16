@@ -22,6 +22,7 @@ The SDK only supports the captcha types documented by CapSkip.
 | reCAPTCHA v3 | `RecaptchaAsync(..., version="v3")` | `userrecaptcha` + `version=v3` |
 | Cloudflare Turnstile | `TurnstileAsync()` | `turnstile` |
 | GeeTest v3 (slide) | `GeetestAsync()` | `geetest` |
+| GeeTest v4 (every challenge type) | `GeetestV4Async()` | `geetest_v4` |
 | ALTCHA (proof-of-work) | `AltchaAsync()` | `altcha` |
 | Capy Puzzle (slide) | `CapyAsync()` | `capy` |
 | CaptchaFox (widget) | `CaptchaFoxAsync()` | `captchafox` |
@@ -30,6 +31,7 @@ The SDK only supports the captcha types documented by CapSkip.
 | DataDome (slider and device check) | `DataDomeAsync()` | `datadome` |
 | hCaptcha (checkbox, invisible, Enterprise) | `HCaptchaAsync()` | `hcaptcha` |
 | MTCaptcha (text captcha) | `MtCaptchaAsync()` | `mt_captcha` |
+| Yandex SmartCaptcha (token) | `YandexSmartAsync()` | `yandex` |
 
 **Proxy** is supported for every method except image
 captcha. For ALTCHA the proxy is used only for the `challenge_url` fetch.
@@ -56,7 +58,7 @@ var solver = new CapSkipClient(
 | `host` | `string` | `"127.0.0.1"` | CapSkip host |
 | `port` | `int` | `8080` | CapSkip port |
 | `defaultTimeout` | `double` | `120` | Seconds to poll the solves that run no browser (image captcha, ALTCHA, Capy, MTCaptcha) |
-| `recaptchaTimeout` | `double` | `300` | Seconds to poll the browser-backed solves (reCAPTCHA, Turnstile, GeeTest, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha) |
+| `recaptchaTimeout` | `double` | `300` | Seconds to poll the browser-backed solves (reCAPTCHA, Turnstile, GeeTest v3 and v4, CaptchaFox, Friendly Captcha, AWS WAF, DataDome, hCaptcha, Yandex SmartCaptcha) |
 | `pollingInterval` | `double` | `5` | Max seconds between polls (starts at 0.25s, backs off to this) |
 
 `AsyncCapSkip` is a subclass alias of `CapSkipClient`, provided for parity with the
@@ -1010,6 +1012,150 @@ Uses `defaultTimeout`: no browser runs, CapSkip reads the challenge itself.
 
 ---
 
+## 14. GeeTest v4 — `GeetestV4Async(captchaId, url, options?)`
+
+GeeTest v4 identifies its widget with a single public `captcha_id`, the same for
+every visitor, and a passed check produces five values the site verifies with
+GeeTest. CapSkip returns those five values. Public docs:
+<https://capskip.com/api-docs/#geetest-v4>.
+
+The arguments follow 2Captcha's `geetest_v4(captcha_id, url, ...)`, so code
+written against it keeps working. `pageurl` is accepted in the options for
+`url`, and `captchaId` for the `captchaId` argument.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `geetest_v4` |
+| `captcha_id` | string | Yes | The `captcha_id` from the page. Surrounding whitespace is trimmed. SDK alias: `captchaId` |
+| `pageurl` | string | Yes | Full http or https URL of the page the widget is on |
+| `risk_type` | string | No | Challenge type to ask for: `slide`, `icon`, `nine`, `word`, `phrase`, `match`, `winlinze`, `svg_seed`, `svg_icon` or `ai`. GeeTest applies it only where the site allows it. SDK alias: `riskType` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | `HTTP`, `HTTPS`, `SOCKS5` or `SOCKS5H` |
+
+Refused locally with `ValidationException`, as CapSkip would refuse them: a
+missing `captcha_id` (`ERROR_BAD_PARAMETERS`), a `pageurl` that is missing or not
+an absolute http(s) address (`ERROR_PAGEURL`), a `proxytype` outside the four
+above, and any parameter not in the table (v3's `gt`, `challenge` and
+`api_server` included). Optionals left `null` or `""` are not sent.
+
+### Getting the `captcha_id`
+
+The page loads `https://static.geetest.com/v4/gt4.js` and passes the ID to
+`initGeetest4` as `captchaId`:
+
+```html
+<script>
+  initGeetest4({ captchaId: "e392e1d7fd421dc63325744d5a2b9c73", product: "bind" }, ...);
+</script>
+```
+
+If the call is built at runtime, open the Network tab and find the request to
+`gcaptcha4.geetest.com/load`: the ID is its `captcha_id` query parameter.
+
+### GET `/res.php`
+
+The SDK polls with `json=1`. `request` holds the five values as a JSON string,
+which the SDK parses a second time:
+
+```json
+{
+  "status": 1,
+  "request": "{\"captcha_id\":\"e392e1d7fd421dc63325744d5a2b9c73\",\"lot_number\":\"7c1a4f0e...\",\"pass_token\":\"2f6c0e4a...\",\"gen_time\":\"1793001600\",\"captcha_output\":\"TM-rSt-9...\"}"
+}
+```
+
+### SDK usage
+
+```csharp
+var result = await solver.GeetestV4Async("e392e1d7fd421dc63325744d5a2b9c73",
+    "https://example.com/login");
+
+// Asking for a challenge type, through a proxy
+var result = await solver.GeetestV4Async(captchaId, pageUrl, new Dictionary<string, object?>
+{
+    ["risk_type"] = "slide",
+    ["proxy"] = new Proxy("HTTP", "login:password@203.0.113.10:8080"),
+});
+
+form["captcha_id"] = result.GeetestCaptchaId;
+form["lot_number"] = result.LotNumber;
+form["pass_token"] = result.PassToken;
+form["gen_time"] = result.GenTime;
+form["captcha_output"] = result.CaptchaOutput;
+```
+
+Uses `recaptchaTimeout`: the widget is passed in a real browser, as with v3.
+
+---
+
+## 15. Yandex SmartCaptcha — `YandexSmartAsync(sitekey, url, options?)`
+
+Yandex SmartCaptcha is the CAPTCHA service of Yandex Cloud. The visitor ticks a
+checkbox or pulls a slider, and Yandex may then ask for a challenge (words to
+type, icons to press in order, a scrambled picture). CapSkip takes the sitekey
+and page address and returns the token the widget writes into the `smart-token`
+form field. Public docs: <https://capskip.com/api-docs/#yandex-smartcaptcha>.
+
+The arguments follow 2Captcha's `yandex_smart(sitekey, url, ...)`, so code
+written against it keeps working. `pageurl` is accepted in the options for `url`.
+
+### POST `/in.php`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | Yes | CapSkip API key |
+| `method` | string | Yes | `yandex` |
+| `sitekey` | string | Yes | The SmartCaptcha sitekey: 16 to 120 letters, digits, `_` or `-`, usually starting `ysc1_`. Surrounding whitespace is trimmed |
+| `pageurl` | string | Yes | Full http or https URL of the page the widget is on |
+| `userAgent` | string | No | The User-Agent to present to Yandex. Sent as `useragent` |
+| `json` | int | No | `0` plain text, `1` JSON |
+| `proxy` | string | No | Proxy address |
+| `proxytype` | string | No | `HTTP`, `HTTPS`, `SOCKS5` or `SOCKS5H` |
+
+Refused locally with `ValidationException`, as CapSkip would refuse them: a
+missing or malformed sitekey (`ERROR_BAD_PARAMETERS`), a `pageurl` that is
+missing or not an absolute http(s) address (`ERROR_PAGEURL`), a `proxytype`
+outside the four above (`ERROR_PROXY_FORMAT`), and any parameter not in the table.
+Optionals left `null` or `""` are not sent.
+
+CapSkip also answers a single SmartCaptcha challenge picture sent with
+`method=base64` and `img_type`; this SDK does not wrap that form.
+
+### GET `/res.php`
+
+The SDK polls with `json=1`, where CapSkip returns the token in `request`:
+
+```json
+{
+  "status": 1,
+  "request": "dD0xNzk0NDE5NTg3O2k9MjAzLjAuMTEzLjI1O0Q9QjQ1RjJBN0MxRTkwRDM2ODU0QzA1M0M3..."
+}
+```
+
+A task Yandex refused the sitekey for fails with
+`ERROR_RECAPTCHA_INVALID_SITEKEY`, one whose sitekey is not allowed on the domain
+of `pageurl` with `ERROR_RECAPTCHA_INVALID_DOMAIN`, and one that could not reach
+Yandex through the proxy with `ERROR_PROXY_CONNECT_REFUSED`; resubmitting the
+same task would fail again.
+
+### SDK usage
+
+```csharp
+var result = await solver.YandexSmartAsync("ysc1_HrTv0IuXWNH5JxfcWnRozoir2pTFbxsaZbrbGI4e292406f2",
+    "https://example.com/register");
+
+form["smart-token"] = result.Token;
+```
+
+A token is valid for five minutes and can be checked once. Uses
+`recaptchaTimeout`: the widget is passed in a real browser.
+
+---
+
 ## Return value
 
 Every solve method returns a `SolveResult`:
@@ -1023,7 +1169,13 @@ public sealed class SolveResult
     public string? Challenge { get; }    // GeeTest
     public string? Validate { get; }     // GeeTest
     public string? Seccode { get; }      // GeeTest
-    public string? Token { get; }        // ALTCHA, CaptchaFox, Friendly Captcha, hCaptcha, MTCaptcha
+    public string? GeetestCaptchaId { get; } // GeeTest v4 — captcha_id
+    public string? LotNumber { get; }    // GeeTest v4 — lot_number
+    public string? PassToken { get; }    // GeeTest v4 — pass_token
+    public string? GenTime { get; }      // GeeTest v4 — gen_time
+    public string? CaptchaOutput { get; } // GeeTest v4 — captcha_output
+    public bool? IsOffline { get; }      // GeeTest v4 — true on an offline pass, else null
+    public string? Token { get; }        // ALTCHA, CaptchaFox, Friendly Captcha, hCaptcha, MTCaptcha, Yandex SmartCaptcha
     public long? Number { get; }         // ALTCHA
     public string? CaptchaKey { get; }   // Capy — capy_captchakey
     public string? ChallengeKey { get; } // Capy — capy_challengekey
@@ -1086,6 +1238,30 @@ MTCaptcha sets `Token`, the same string as `Code`:
 // result.Token      "v1(0f3c9e2a,7b1d4c88,MTPublic-KzqLY1cKH,…**)"
 ```
 
+Yandex SmartCaptcha sets `Token`, the same string as `Code`:
+
+```csharp
+// result.CaptchaId  "12345"
+// result.Code       "dD0xNzk0NDE5NTg3O2k9MjAzLjAuMTEzLjI1O0Q9…"
+// result.Token      "dD0xNzk0NDE5NTg3O2k9MjAzLjAuMTEzLjI1O0Q9…"
+```
+
+GeeTest v4 expands its answer into the five values the site verifies (`Code`
+keeps the raw JSON string). GeeTest's own `captcha_id` is `GeetestCaptchaId`,
+since `CaptchaId` is CapSkip's id for the solve. `IsOffline` is `true` only when
+GeeTest could not be reached and passed the widget in offline mode, and `null`
+otherwise:
+
+```csharp
+// result.CaptchaId         "12345"
+// result.Code              "{\"captcha_id\":\"...\",\"lot_number\":\"...\",\"pass_token\":\"...\",\"gen_time\":\"...\",\"captcha_output\":\"...\"}"
+// result.GeetestCaptchaId  "e392e1d7fd421dc63325744d5a2b9c73"
+// result.LotNumber         "7c1a4f0e9b2d48a6b3e5f7d9c1a3b5e7"
+// result.PassToken         "2f6c0e4a8b1d5f9e3c7a0b4d8e2f6a1c..."
+// result.GenTime           "1793001600"
+// result.CaptchaOutput     "TM-rSt-9GZ_6s_5..."
+```
+
 ---
 
 ## SDK parameter aliases
@@ -1109,6 +1285,8 @@ Convenience aliases mapped before sending to CapSkip:
 | `captchaScript` | `captcha_script` |
 | `jsapi_script` | `jsapiScript` |
 | `captchaUrl` / `captchaURL` | `captcha_url` |
+| `captchaId` | `captcha_id` |
+| `riskType` | `risk_type` |
 | `proxy` (`Proxy` / dictionary) | `proxy` + `proxytype` strings |
 
 ```csharp

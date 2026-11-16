@@ -518,6 +518,8 @@ await http.PostAsync(challengeUrl, new FormUrlEncodedContent(new Dictionary<stri
 | reCAPTCHA | `RecaptchaAsync(sitekey, url, options?)` |
 | Turnstile | `TurnstileAsync(sitekey, url, options?)` |
 | GeeTest v3 | `GeetestAsync(gt, challenge, url, options?)` |
+| GeeTest v4 | `GeetestV4Async(captchaId, url, options?)` |
+| Yandex SmartCaptcha | `YandexSmartAsync(sitekey, url, options?)` |
 | Manual submit | `SendAsync(parameters) → id` |
 | Manual poll | `GetResultAsync(id, json = 0)` |
 
@@ -539,6 +541,8 @@ The SDK accepts friendly names and converts them to the raw API parameters:
 | `score`, `minScore` | `min_score` |
 | `datas`, `data_s` | `data-s` |
 | `apiServer`, `api_subdomain` | `api_server` |
+| `captchaId` | `captcha_id` |
+| `riskType` | `risk_type` |
 | `proxy` (`Proxy` or dictionary) | `proxy` + `proxytype` strings |
 
 Anything CapSkip does not document for a given captcha type is rejected with

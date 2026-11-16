@@ -10,8 +10,8 @@ namespace CapSkip
 {
     /// <summary>
     /// Client for the CapSkip local captcha solver (image CAPTCHA, reCAPTCHA v2/v3,
-    /// Cloudflare Turnstile, GeeTest v3, ALTCHA, Capy Puzzle, CaptchaFox, Friendly
-    /// Captcha, AWS WAF, DataDome, hCaptcha and MTCaptcha). Every solve method is asynchronous and returns a
+    /// Cloudflare Turnstile, GeeTest v3 and v4, ALTCHA, Capy Puzzle, CaptchaFox, Friendly
+    /// Captcha, AWS WAF, DataDome, hCaptcha, MTCaptcha and Yandex SmartCaptcha). Every solve method is asynchronous and returns a
     /// <see cref="SolveResult"/>.
     /// </summary>
     public class CapSkipClient
@@ -23,7 +23,7 @@ namespace CapSkip
         internal const double InitialPollingInterval = 0.25;
 
         /// <summary>The installed SDK version.</summary>
-        public static readonly string Version = "1.7.0";
+        public static readonly string Version = "1.8.0";
 
         /// <summary>CapSkip API key sent with every request.</summary>
         public string ApiKey { get; }
@@ -197,6 +197,79 @@ namespace CapSkip
 
             var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
             return ResponseParsing.ApplyGeetestSolution(result);
+        }
+
+        /// <summary>Solve a GeeTest v4 CAPTCHA.</summary>
+        /// <param name="captchaId">
+        /// The widget's ID, passed to <c>initGeetest4</c> as <c>captchaId</c>. It is
+        /// the same for every visitor, so read it once. Surrounding whitespace is
+        /// trimmed before it is sent.
+        /// </param>
+        /// <param name="url">Full http or https URL of the page the widget is on.</param>
+        /// <param name="options">
+        /// Optional <c>risk_type</c>: the challenge type to ask GeeTest for
+        /// (<c>slide</c>, <c>icon</c>, <c>nine</c>, <c>word</c>, <c>phrase</c>,
+        /// <c>match</c>, <c>winlinze</c>, <c>svg_seed</c>, <c>svg_icon</c> or
+        /// <c>ai</c>). GeeTest applies it only where the site allows it. Optional
+        /// <c>proxy</c>, as a URI string (HTTP), a <see cref="CapSkip.Proxy"/>, or
+        /// <c>{ ["type"] = "HTTP", ["uri"] = "login:password@IP:PORT" }</c>.
+        /// <c>riskType</c> is accepted for <c>risk_type</c>, <c>captchaId</c> for
+        /// <paramref name="captchaId"/> and <c>pageurl</c> for <paramref name="url"/>.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result whose <see cref="SolveResult.Code"/> is the raw JSON answer, plus the
+        /// parsed <see cref="SolveResult.GeetestCaptchaId"/>, <see cref="SolveResult.LotNumber"/>,
+        /// <see cref="SolveResult.PassToken"/>, <see cref="SolveResult.GenTime"/> and
+        /// <see cref="SolveResult.CaptchaOutput"/>, the five values to post back to the
+        /// target site under their wire names (<c>captcha_id</c>, <c>lot_number</c>,
+        /// <c>pass_token</c>, <c>gen_time</c>, <c>captcha_output</c>), and
+        /// <see cref="SolveResult.IsOffline"/> when GeeTest passed the widget in
+        /// offline mode.
+        /// </returns>
+        /// <remarks>
+        /// The arguments follow 2Captcha's <c>geetest_v4(captcha_id, url, **kwargs)</c>.
+        /// v3's <c>gt</c>, <c>challenge</c> and <c>api_server</c> are refused: v4 has
+        /// no per-request challenge.
+        /// </remarks>
+        public async Task<SolveResult> GeetestV4Async(
+            string captchaId,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // A real browser solve, like v3, so it gets the longer of the two
+            // timeouts unless the caller asked for a specific one.
+            var pars = new Dictionary<string, object?>
+            {
+                ["timeout"] = RecaptchaTimeout,
+            };
+
+            // Each is left out when null, so captchaId / pageurl in options can
+            // stand in for it without tripping the alias conflict check.
+            if (captchaId != null)
+            {
+                pars["captcha_id"] = captchaId;
+            }
+
+            if (url != null)
+            {
+                pars["url"] = url;
+            }
+
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "geetest_v4";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyGeetestV4Solution(result);
         }
 
         /// <summary>Solve an ALTCHA proof-of-work challenge.</summary>
@@ -732,6 +805,72 @@ namespace CapSkip
             return ResponseParsing.ApplyTokenSolution(result);
         }
 
+        /// <summary>Solve a Yandex SmartCaptcha and return its token.</summary>
+        /// <param name="sitekey">
+        /// The widget's <c>data-sitekey</c>, usually starting <c>ysc1_</c>: 16 to 120
+        /// letters, digits, <c>_</c> or <c>-</c>. Surrounding whitespace is trimmed
+        /// before it is checked and sent.
+        /// </param>
+        /// <param name="url">
+        /// Full http or https URL of the page the widget is on. Yandex checks the
+        /// sitekey against that domain.
+        /// </param>
+        /// <param name="options">
+        /// Optional <c>userAgent</c>: the User-Agent to present to Yandex. Optional
+        /// <c>proxy</c>, as a URI string (HTTP), a <see cref="CapSkip.Proxy"/>, or
+        /// <c>{ ["type"] = "HTTP", ["uri"] = "login:password@IP:PORT" }</c>.
+        /// <c>pageurl</c> is accepted in place of <paramref name="url"/>, and
+        /// <c>useragent</c> / <c>user_agent</c> in place of <c>userAgent</c>.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the submit and the polling loop.</param>
+        /// <returns>
+        /// A result whose <see cref="SolveResult.Token"/> is the token for the form's
+        /// <c>smart-token</c> field, with the same string in
+        /// <see cref="SolveResult.Code"/>. A token is valid for five minutes and
+        /// checks once.
+        /// </returns>
+        /// <remarks>
+        /// The arguments follow 2Captcha's <c>yandex_smart(sitekey, url, **kwargs)</c>.
+        /// Picture tasks (<c>method=base64</c> with an <c>img_type</c>) are not
+        /// wrapped; send those through <see cref="SolveAsync"/>.
+        /// </remarks>
+        public async Task<SolveResult> YandexSmartAsync(
+            string sitekey,
+            string url,
+            IDictionary<string, object?>? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            // The widget runs in a real browser and may ask for several rounds of
+            // challenges, so it gets the longer of the two timeouts unless the
+            // caller asked for a specific one.
+            var pars = new Dictionary<string, object?>
+            {
+                ["timeout"] = RecaptchaTimeout,
+                ["sitekey"] = sitekey,
+            };
+
+            // Left out when null, so pageurl in options can stand in for it without
+            // tripping the alias conflict check.
+            if (url != null)
+            {
+                pars["url"] = url;
+            }
+
+            foreach (var kv in Clone(options))
+            {
+                if (kv.Value != null)
+                {
+                    pars[kv.Key] = kv.Value;
+                }
+            }
+
+            pars["method"] = "yandex";
+            pars["poll_json"] = 1;
+
+            var result = await SolveAsync(pars, cancellationToken).ConfigureAwait(false);
+            return ResponseParsing.ApplyTokenSolution(result);
+        }
+
         /// <summary>Submit then poll to completion. Used by the higher-level solve methods.</summary>
         public async Task<SolveResult> SolveAsync(
             IDictionary<string, object?> options,
@@ -932,6 +1071,16 @@ namespace CapSkip
             if (method == "mt_captcha" || method == "mtcaptcha")
             {
                 return ApiParams.PrepareSubmitParams(parameters, "mtcaptcha");
+            }
+
+            if (method == "geetest_v4")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "geetest_v4");
+            }
+
+            if (method == "yandex")
+            {
+                return ApiParams.PrepareSubmitParams(parameters, "yandex");
             }
 
             return ApiParams.ApplyProxy(ApiParams.ApplyParamAliases(parameters));

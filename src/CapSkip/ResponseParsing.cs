@@ -408,6 +408,53 @@ namespace CapSkip
         }
 
         /// <summary>
+        /// Expand a GeeTest v4 answer into <see cref="SolveResult.GeetestCaptchaId"/>,
+        /// <see cref="SolveResult.LotNumber"/>, <see cref="SolveResult.PassToken"/>,
+        /// <see cref="SolveResult.GenTime"/> and <see cref="SolveResult.CaptchaOutput"/>,
+        /// plus <see cref="SolveResult.IsOffline"/> when the answer carries it.
+        /// </summary>
+        /// <remarks>
+        /// A GeeTest v4 answer is five values the site verifies with GeeTest
+        /// together, under these same names. <c>isOffline</c> rides along only when
+        /// GeeTest could not be reached and its widget passed without a challenge.
+        /// <see cref="SolveResult.Code"/> keeps the raw answer, the JSON string the
+        /// server sends in <c>request</c>, so callers that forward it verbatim keep
+        /// working. If it does not parse, the result is returned untouched rather
+        /// than masking the server's reply.
+        /// </remarks>
+        internal static SolveResult ApplyGeetestV4Solution(SolveResult result)
+        {
+            if (!TryParseObjectAnswer(result, out var payload))
+            {
+                return result;
+            }
+
+            result.GeetestCaptchaId = ObjectAnswerField(payload, "captcha_id") ?? result.GeetestCaptchaId;
+            result.LotNumber = ObjectAnswerField(payload, "lot_number") ?? result.LotNumber;
+            result.PassToken = ObjectAnswerField(payload, "pass_token") ?? result.PassToken;
+            result.GenTime = ObjectAnswerField(payload, "gen_time") ?? result.GenTime;
+            result.CaptchaOutput = ObjectAnswerField(payload, "captcha_output") ?? result.CaptchaOutput;
+
+            if (payload.TryGetValue("isOffline", out var offline) && offline != null)
+            {
+                switch (offline)
+                {
+                    case bool flag:
+                        result.IsOffline = flag;
+                        break;
+                    case string text when bool.TryParse(text.Trim(), out var parsed):
+                        result.IsOffline = parsed;
+                        break;
+                    case long number:
+                        result.IsOffline = number != 0;
+                        break;
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Expose the ALTCHA answer as <see cref="SolveResult.Token"/>, and the
         /// winning counter as <see cref="SolveResult.Number"/>.
         /// </summary>

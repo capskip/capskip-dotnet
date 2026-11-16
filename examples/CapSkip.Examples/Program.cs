@@ -19,6 +19,10 @@ switch (command)
     case "geetest":
         await GeetestExample.RunAsync();
         break;
+    case "geetestv4":
+    case "geetest_v4":
+        await GeetestV4Example.RunAsync();
+        break;
     case "altcha":
         await AltchaExample.RunAsync();
         break;
@@ -45,6 +49,10 @@ switch (command)
     case "mtcaptcha":
         await MtCaptchaExample.RunAsync();
         break;
+    case "yandex":
+    case "yandexsmart":
+        await YandexSmartExample.RunAsync();
+        break;
     case "async":
         await AsyncExample.RunAsync();
         break;
@@ -58,6 +66,7 @@ switch (command)
         Console.WriteLine("  recaptcha  Solve a reCAPTCHA v2 (Google's public test key)");
         Console.WriteLine("  turnstile  Solve a Cloudflare Turnstile (public test key)");
         Console.WriteLine("  geetest    Solve a GeeTest v3 slider (fetches a fresh gt/challenge)");
+        Console.WriteLine("  geetestv4  Solve a GeeTest v4 CAPTCHA (GeeTest's public demo)");
         Console.WriteLine("  altcha     Solve an ALTCHA proof-of-work challenge");
         Console.WriteLine("  capy       Solve a Capy Puzzle (returns three form values, not a token)");
         Console.WriteLine("  captchafox Solve a CaptchaFox widget");
@@ -66,6 +75,7 @@ switch (command)
         Console.WriteLine("  datadome   Pass a DataDome block page (returns a cookie, set TARGET_URL)");
         Console.WriteLine("  hcaptcha   Solve an hCaptcha widget (hCaptcha's public demo)");
         Console.WriteLine("  mtcaptcha  Solve an MTCaptcha text captcha (2Captcha's public demo)");
+        Console.WriteLine("  yandex     Solve a Yandex SmartCaptcha (Yandex's public demo)");
         Console.WriteLine("  async      Solve several captchas concurrently");
         Console.WriteLine("  verify     Check CapSkip is running (accepts --host --port --api-key)");
         Console.WriteLine();

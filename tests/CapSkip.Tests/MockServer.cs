@@ -129,6 +129,41 @@ namespace CapSkip.Tests
         private static readonly System.Text.RegularExpressions.Regex MtCaptchaSitekey =
             new System.Text.RegularExpressions.Regex("^MTPublic-[A-Za-z0-9_-]{1,55}$");
 
+        /// <summary>
+        /// GeeTest v4, as CapSkip's res.php answers it: the five values as one
+        /// compact JSON string. Synthetic, never a captured answer.
+        /// </summary>
+        public const string GeetestV4CaptchaId = "54088bb07d2df3c46b79f80300b0abbe";
+
+        public const string GeetestV4LotNumber = "7c1a4f0e9b2d48a6b3e5f7d9c1a3b5e7";
+
+        public const string GeetestV4PassToken = "2f6c0e4a8b1d5f9e3c7a0b4d8e2f6a1c5b9d3e7f0a4c8b2e6d1f5a9c3e7b0d4f8";
+
+        public const string GeetestV4GenTime = "1793001600";
+
+        public const string GeetestV4CaptchaOutput =
+            "TM-rSt-9GZ_6s_5-dyAo3ZzQxZ3nhs8agozV1dXHM52rdKikcSbx6m9Z_vx1YtexMiouzC-83byvGlGzNTrsCk6EaDdzrugpzIevLISL7vRvwymvNEQ-NUfQM_PoUHAgWIs1w==";
+
+        public const string GeetestV4Solution =
+            "{\"captcha_id\":\"" + GeetestV4CaptchaId + "\",\"lot_number\":\"" + GeetestV4LotNumber
+            + "\",\"pass_token\":\"" + GeetestV4PassToken + "\",\"gen_time\":\"" + GeetestV4GenTime
+            + "\",\"captcha_output\":\"" + GeetestV4CaptchaOutput + "\"}";
+
+        /// <summary>
+        /// Yandex SmartCaptcha, as CapSkip's res.php answers it: the token and
+        /// nothing else. Synthetic: a real token embeds the solver's public IP.
+        /// </summary>
+        public const string YandexToken =
+            "dD0xNzk0NDE5NTg3O2k9MjAzLjAuMTEzLjI1O0Q9QjQ1RjJBN0MxRTkwRDM2ODU0QzA1M0M3QTFF"
+            + "MkIzQzRENUU2RjcwODE5MkEzQjRDNUQ2RTdGODA5MUEyQjNDNEQ1RTZGNzA4MTt1PTE3OTQ0MTk1"
+            + "ODcxMjM0NTY3ODk7aD01ZjBjMmE5ZTYxZDg0YjM3YTBjMWU5YjJkNmY0YTg3Mw==";
+
+        private static readonly System.Text.RegularExpressions.Regex YandexSitekey =
+            new System.Text.RegularExpressions.Regex("^[A-Za-z0-9_-]{16,120}$");
+
+        private static readonly System.Text.RegularExpressions.Regex WebPageUrl =
+            new System.Text.RegularExpressions.Regex("^https?://[^/?#:@\\s]+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
         private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, string>> _submitted =
             new ConcurrentDictionary<string, IReadOnlyDictionary<string, string>>();
 
@@ -387,6 +422,33 @@ namespace CapSkip.Tests
                     Send(stream, $"OK|{MtCaptchaToken}");
                 }
             }
+            else if (_idType.TryGetValue(cid, out var gt4Type) && gt4Type == "geetest_v4")
+            {
+                // request is the answer as a JSON string, and the app writes its
+                // inner quotes as ", so the body is built by hand.
+                if (wantJson)
+                {
+                    Send(
+                        stream,
+                        "{\"status\":1,\"request\":\"" + GeetestV4Solution.Replace("\"", "\\u0022") + "\"}",
+                        "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{GeetestV4Solution}");
+                }
+            }
+            else if (_idType.TryGetValue(cid, out var yandexType) && yandexType == "yandex")
+            {
+                if (wantJson)
+                {
+                    Send(stream, $"{{\"status\":1,\"request\":\"{YandexToken}\"}}", "application/json");
+                }
+                else
+                {
+                    Send(stream, $"OK|{YandexToken}");
+                }
+            }
             else if (_idType.TryGetValue(cid, out var friendlyType) && friendlyType == "friendly_captcha")
             {
                 if (wantJson)
@@ -454,6 +516,33 @@ namespace CapSkip.Tests
             {
                 Send(stream, "ERROR_BAD_PARAMETERS");
                 return;
+            }
+
+            // GeeTest v4 needs its captcha_id and takes none of v3's per-request
+            // challenge parameters; CapSkip answers ERROR_BAD_PARAMETERS otherwise.
+            if (fields.TryGetValue("method", out var gt4Method) && gt4Method == "geetest_v4"
+                && (!fields.TryGetValue("captcha_id", out var gt4Id) || gt4Id.Trim().Length == 0
+                    || fields.ContainsKey("gt") || fields.ContainsKey("challenge")))
+            {
+                Send(stream, "ERROR_BAD_PARAMETERS");
+                return;
+            }
+
+            // Yandex SmartCaptcha: a sitekey failing the server's test is
+            // ERROR_BAD_PARAMETERS, a page URL that is not http(s)://host ERROR_PAGEURL.
+            if (fields.TryGetValue("method", out var yandexMethod) && yandexMethod == "yandex")
+            {
+                if (!(fields.TryGetValue("sitekey", out var yandexSitekey) && YandexSitekey.IsMatch(yandexSitekey)))
+                {
+                    Send(stream, "ERROR_BAD_PARAMETERS");
+                    return;
+                }
+
+                if (!(fields.TryGetValue("pageurl", out var yandexPage) && WebPageUrl.IsMatch(yandexPage)))
+                {
+                    Send(stream, "ERROR_PAGEURL");
+                    return;
+                }
             }
 
             var pageurl = fields.TryGetValue("pageurl", out var p) ? p : string.Empty;

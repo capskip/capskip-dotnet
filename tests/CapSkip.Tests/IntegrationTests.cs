@@ -728,5 +728,232 @@ namespace CapSkip.Tests
             Assert.Equal(MockServer.MtCaptchaToken, result.Code);
             Assert.Equal(MockServer.MtCaptchaToken, result.Token);
         }
+
+        /// <summary>Submit raw fields to the mock's in.php, past the SDK's own checks.</summary>
+        private async Task<string> RawSubmit(IDictionary<string, object?> fields)
+        {
+            var api = new ApiClient(_server.Host, _server.Port);
+            try
+            {
+                return await api.InAsync(new Dictionary<string, object?>(fields) { ["key"] = "capskip" });
+            }
+            catch (ApiException e)
+            {
+                return e.Message;
+            }
+        }
+
+        // -- GeeTest v4 --------------------------------------------------------
+
+        private const string Gt4CaptchaId = MockServer.GeetestV4CaptchaId;
+        private const string Gt4Page = "https://gt4.geetest.com/";
+
+        /// <summary>
+        /// The mock answers json=1 polls with request as a JSON string whose inner
+        /// quotes are written ", as the app does.
+        /// </summary>
+        [Fact]
+        public async Task GeetestV4()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.GeetestV4Async(Gt4CaptchaId, Gt4Page);
+
+            Assert.False(string.IsNullOrEmpty(result.CaptchaId));
+            Assert.Equal(MockServer.GeetestV4Solution, result.Code);
+            Assert.Equal(Gt4CaptchaId, result.GeetestCaptchaId);
+            Assert.Equal(MockServer.GeetestV4LotNumber, result.LotNumber);
+            Assert.Equal(MockServer.GeetestV4PassToken, result.PassToken);
+            Assert.Equal(MockServer.GeetestV4GenTime, result.GenTime);
+            Assert.Equal(MockServer.GeetestV4CaptchaOutput, result.CaptchaOutput);
+            Assert.Null(result.IsOffline);
+
+            var sent = _server.Submitted(result.CaptchaId);
+            Assert.Equal("geetest_v4", sent["method"]);
+            Assert.Equal(Gt4CaptchaId, sent["captcha_id"]);
+            Assert.Equal(Gt4Page, sent["pageurl"]);
+        }
+
+        [Fact]
+        public async Task GeetestV4WithEveryOption()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.GeetestV4Async(Gt4CaptchaId, null!, new Dictionary<string, object?>
+            {
+                ["pageurl"] = Gt4Page,
+                ["riskType"] = "slide",
+                ["proxy"] = new Proxy("SOCKS5H", "login:p%40ss@203.0.113.7:1080"),
+            });
+
+            Assert.Equal(MockServer.GeetestV4LotNumber, result.LotNumber);
+
+            var sent = _server.Submitted(result.CaptchaId);
+            Assert.Equal("slide", sent["risk_type"]);
+            Assert.False(sent.ContainsKey("riskType"));
+            Assert.Equal("login:p%40ss@203.0.113.7:1080", sent["proxy"]);
+            Assert.Equal("SOCKS5H", sent["proxytype"]);
+        }
+
+        [Fact]
+        public async Task GeetestV4PlainTextPoll()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.SolveAsync(new Dictionary<string, object?>
+            {
+                ["method"] = "geetest_v4",
+                ["captcha_id"] = Gt4CaptchaId,
+                ["url"] = Gt4Page,
+            });
+
+            Assert.Equal(MockServer.GeetestV4Solution, result.Code);
+        }
+
+        [Fact]
+        public async Task GeetestV4MissingCaptchaIdIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(() => solver.GeetestV4Async("", Gt4Page));
+        }
+
+        [Fact]
+        public async Task GeetestV4V3ParametersAreRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => solver.GeetestV4Async(Gt4CaptchaId, Gt4Page, new Dictionary<string, object?>
+                {
+                    ["gt"] = "81388ea1fc187e0c335c0a8907ff2625",
+                }));
+        }
+
+        /// <summary>The mock refuses what CapSkip refuses, so a local-validation slip shows up.</summary>
+        [Fact]
+        public async Task GeetestV4MockRefusesWhatTheServerRefuses()
+        {
+            Assert.Equal("ERROR_BAD_PARAMETERS", await RawSubmit(new Dictionary<string, object?>
+            {
+                ["method"] = "geetest_v4",
+                ["pageurl"] = Gt4Page,
+            }));
+            Assert.Equal("ERROR_BAD_PARAMETERS", await RawSubmit(new Dictionary<string, object?>
+            {
+                ["method"] = "geetest_v4",
+                ["captcha_id"] = Gt4CaptchaId,
+                ["gt"] = "81388ea1fc187e0c335c0a8907ff2625",
+                ["pageurl"] = Gt4Page,
+            }));
+        }
+
+        [Fact]
+        public async Task GeetestV4ThroughTheAsyncAlias()
+        {
+            var solver = new AsyncCapSkip(host: _server.Host, port: _server.Port, pollingInterval: 1);
+
+            var result = await solver.GeetestV4Async(
+                Gt4CaptchaId, Gt4Page, new Dictionary<string, object?> { ["risk_type"] = "icon" });
+
+            Assert.Equal(MockServer.GeetestV4Solution, result.Code);
+            Assert.Equal(MockServer.GeetestV4CaptchaOutput, result.CaptchaOutput);
+        }
+
+        // -- Yandex SmartCaptcha -----------------------------------------------
+
+        private const string YandexSiteKey = "ysc1_DAo8nFPdNCMHkAwYxIUJFxW5IIJd99BBfeeeee";
+        private const string YandexPage = "https://smartcaptcha.yandexcloud.net/demo";
+
+        [Fact]
+        public async Task YandexSmart()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.YandexSmartAsync(YandexSiteKey, YandexPage);
+
+            Assert.False(string.IsNullOrEmpty(result.CaptchaId));
+            Assert.Equal(MockServer.YandexToken, result.Code);
+            Assert.Equal(MockServer.YandexToken, result.Token);
+            Assert.Equal("yandex", _server.Submitted(result.CaptchaId)["method"]);
+        }
+
+        [Fact]
+        public async Task YandexSmartWithEveryOption()
+        {
+            var solver = MakeSolver();
+
+            var result = await solver.YandexSmartAsync(" " + YandexSiteKey, YandexPage, new Dictionary<string, object?>
+            {
+                ["userAgent"] = "Mozilla/5.0 (caller)",
+                ["proxy"] = new Proxy("HTTPS", "login:password@203.0.113.7:3128"),
+            });
+
+            Assert.Equal(MockServer.YandexToken, result.Token);
+
+            var sent = _server.Submitted(result.CaptchaId);
+            Assert.Equal(YandexSiteKey, sent["sitekey"]);
+            Assert.Equal(YandexPage, sent["pageurl"]);
+            Assert.Equal("Mozilla/5.0 (caller)", sent["useragent"]);
+            Assert.Equal("login:password@203.0.113.7:3128", sent["proxy"]);
+            Assert.Equal("HTTPS", sent["proxytype"]);
+        }
+
+        [Fact]
+        public async Task YandexSmartBadSitekeyIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(() => solver.YandexSmartAsync("too-short", YandexPage));
+        }
+
+        [Fact]
+        public async Task YandexSmartBadPageurlIsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => solver.YandexSmartAsync(YandexSiteKey, "smartcaptcha.yandexcloud.net/demo"));
+        }
+
+        [Fact]
+        public async Task YandexSmartSocks4IsRefusedLocally()
+        {
+            var solver = MakeSolver();
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => solver.YandexSmartAsync(YandexSiteKey, YandexPage, new Dictionary<string, object?>
+                {
+                    ["proxy"] = new Proxy("SOCKS4", "203.0.113.7:1080"),
+                }));
+        }
+
+        [Fact]
+        public async Task YandexSmartMockRefusesWhatTheServerRefuses()
+        {
+            Assert.Equal("ERROR_BAD_PARAMETERS", await RawSubmit(new Dictionary<string, object?>
+            {
+                ["method"] = "yandex",
+                ["sitekey"] = "too-short",
+                ["pageurl"] = YandexPage,
+            }));
+            Assert.Equal("ERROR_PAGEURL", await RawSubmit(new Dictionary<string, object?>
+            {
+                ["method"] = "yandex",
+                ["sitekey"] = YandexSiteKey,
+                ["pageurl"] = "smartcaptcha.yandexcloud.net/demo",
+            }));
+        }
+
+        [Fact]
+        public async Task YandexSmartThroughTheAsyncAlias()
+        {
+            var solver = new AsyncCapSkip(host: _server.Host, port: _server.Port, pollingInterval: 1);
+
+            var result = await solver.YandexSmartAsync(YandexSiteKey, YandexPage);
+
+            Assert.Equal(MockServer.YandexToken, result.Code);
+            Assert.Equal(MockServer.YandexToken, result.Token);
+        }
     }
 }

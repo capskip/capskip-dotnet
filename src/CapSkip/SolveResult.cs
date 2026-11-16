@@ -3,12 +3,15 @@ namespace CapSkip
     /// <summary>
     /// The result every solve method returns. Mirrors the dictionary the other
     /// CapSkip SDKs return (<c>captchaId</c>, <c>code</c>, for Turnstile
-    /// <c>userAgent</c>, for GeeTest <c>challenge</c>/<c>validate</c>/<c>seccode</c>, and for
+    /// <c>userAgent</c>, for GeeTest <c>challenge</c>/<c>validate</c>/<c>seccode</c>, for
+    /// GeeTest v4 <c>captcha_id</c>/<c>lot_number</c>/<c>pass_token</c>/<c>gen_time</c>/<c>captcha_output</c>
+    /// (and <c>isOffline</c>), for
     /// ALTCHA <c>token</c>/<c>number</c>, for Capy
     /// <c>captchakey</c>/<c>challengekey</c>/<c>answer</c>, for AWS WAF
     /// <c>captcha_voucher</c>/<c>existing_token</c>, for DataDome
     /// <c>cookie</c>/<c>userAgent</c>/<c>proxy</c>, for hCaptcha
-    /// <c>token</c>/<c>respKey</c>/<c>userAgent</c>, and for MTCaptcha <c>token</c>).
+    /// <c>token</c>/<c>respKey</c>/<c>userAgent</c>, and for MTCaptcha and Yandex
+    /// SmartCaptcha <c>token</c>).
     /// </summary>
     public sealed class SolveResult
     {
@@ -54,11 +57,52 @@ namespace CapSkip
         public string? Seccode { get; set; }
 
         /// <summary>
+        /// GeeTest v4 only — the <c>captcha_id</c> value to post back: the widget's
+        /// ID, echoed by GeeTest. Named apart from <see cref="CaptchaId"/>, which is
+        /// CapSkip's own id for the solve. <see langword="null"/> for other captcha
+        /// types.
+        /// </summary>
+        public string? GeetestCaptchaId { get; set; }
+
+        /// <summary>
+        /// GeeTest v4 only — the <c>lot_number</c> value to post back.
+        /// <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? LotNumber { get; set; }
+
+        /// <summary>
+        /// GeeTest v4 only — the <c>pass_token</c> value to post back.
+        /// <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? PassToken { get; set; }
+
+        /// <summary>
+        /// GeeTest v4 only — the <c>gen_time</c> value to post back.
+        /// <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? GenTime { get; set; }
+
+        /// <summary>
+        /// GeeTest v4 only — the <c>captcha_output</c> value to post back.
+        /// <see langword="null"/> for other captcha types.
+        /// </summary>
+        public string? CaptchaOutput { get; set; }
+
+        /// <summary>
+        /// GeeTest v4 only — <see langword="true"/> when GeeTest could not be reached
+        /// and its widget passed in offline mode, without a challenge. The site
+        /// decides whether to accept such a pass. <see langword="null"/> when the
+        /// answer did not carry it, and for other captcha types.
+        /// </summary>
+        public bool? IsOffline { get; set; }
+
+        /// <summary>
         /// The token, named for the form field it fills: the same string as
         /// <see cref="Code"/>. For ALTCHA the base64 payload for the site's
         /// <c>altcha</c> field; for hCaptcha the value for
         /// <c>h-captcha-response</c> (and <c>g-recaptcha-response</c>); for MTCaptcha
-        /// the <c>v1(...)</c> value for <c>mtcaptcha-verifiedtoken</c>; likewise for
+        /// the <c>v1(...)</c> value for <c>mtcaptcha-verifiedtoken</c>; for Yandex
+        /// SmartCaptcha the value for <c>smart-token</c>; likewise for
         /// CaptchaFox and Friendly Captcha. <see langword="null"/> for other captcha
         /// types.
         /// </summary>
@@ -159,6 +203,13 @@ namespace CapSkip
             {
                 return $"SolveResult {{ CaptchaId = {CaptchaId}, Number = {Number}, "
                     + $"Token = {Token} }}";
+            }
+
+            if (PassToken != null)
+            {
+                return $"SolveResult {{ CaptchaId = {CaptchaId}, GeetestCaptchaId = {GeetestCaptchaId}, "
+                    + $"LotNumber = {LotNumber}, PassToken = {PassToken}, GenTime = {GenTime}, "
+                    + $"CaptchaOutput = {CaptchaOutput} }}";
             }
 
             if (Validate != null)

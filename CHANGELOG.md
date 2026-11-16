@@ -5,6 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-11-16
+
+### Added
+
+- **GeeTest v4 support** via `GeetestV4Async(captchaId, url, options)`, sent as
+  `method=geetest_v4`, following 2Captcha's `geetest_v4(captcha_id, url, ...)`.
+  Optional: `risk_type` / `riskType` and `proxy`; `captchaId` is accepted in
+  `options` for `captcha_id` and `pageurl` for `url`. It works the same through
+  `AsyncCapSkip`.
+- The GeeTest v4 result expands the five values the site verifies into
+  `GeetestCaptchaId`, `LotNumber`, `PassToken`, `GenTime` and `CaptchaOutput`,
+  plus `IsOffline` on an offline pass. `Code` keeps the raw JSON string.
+  GeeTest's `captcha_id` is `GeetestCaptchaId` because `CaptchaId` is already
+  CapSkip's id for the solve.
+- **Yandex SmartCaptcha support** via `YandexSmartAsync(sitekey, url, options)`,
+  sent as `method=yandex`, following 2Captcha's `yandex_smart(sitekey, url, ...)`.
+  Optional: `userAgent` / `useragent` / `user_agent` and `proxy`. The result
+  carries the token as both `Code` and `Token`, for the form's `smart-token`
+  field.
+- `geetestv4` and `yandex` examples (`dotnet run -- geetestv4`,
+  `dotnet run -- yandex`) against GeeTest's and Yandex's public demo pages.
+
+### Notes
+
+- Refused locally with a `ValidationException`, before a round-trip: for GeeTest
+  v4, a missing `captcha_id`, a page URL that is missing or not an absolute
+  http(s) address, and v3's parameters or any other the API does not take; for
+  Yandex SmartCaptcha, a sitekey that is not 16 to 120 letters, digits, `_` or
+  `-`, the same page URL test, and any parameter the API does not take. An
+  optional sent as `null` or an empty string is not sent.
+- Both use `recaptchaTimeout`: each is passed in a real browser.
+
 ## [1.7.0] - 2026-11-10
 
 ### Added
